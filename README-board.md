@@ -20,9 +20,13 @@ All are a classic **ESP32** (not S3) with **4 MB flash, no PSRAM**. Build for
 | Board | How to recognise it | Wiring | Panel |
 |---|---|---|---|
 | **ESP32-2432S028** | the original CYD; micro-USB (some have USB-C too); "ESP32-2432S028" on the back | own touch | ILI9341 or ST7789, 240×320 |
-| **ESP32-32E 2.8"** | silkscreen *2.8" LCD Display, ESP32-32E 240x320, Resistance Touch*; single USB-C; 2-pin battery connector by the card slot | own touch | ILI9341 or ST7789, 240×320 |
-| **ESP32-32E 3.2"** | silkscreen *3.2" LCD Display, ESP32-32E 240x320, Resistance Touch* — the 2.8"'s wording with only the size changed | shared touch | ST7789, 240×320 |
-| **ESP32-32E 3.5" / 4.0"** | silkscreen *3.5" (4.0") LCD Display, ESP32-32E 320x480, Resistance Touch* | shared touch | ST7796, 320×480 |
+| **ESP32-32E 2.8"** | silkscreen *2.8" LCD Display / ESP32-32E 240x320 / Resistance Touch*; single USB-C; 2-pin battery connector by the card slot | own touch | ILI9341 or ST7789, 240×320 |
+| **ESP32-32E 3.2"** | silkscreen *3.2" LCD Display / ESP32-32E 240x320 / Resistance Touch* | shared touch | ST7789, 240×320 |
+| **ESP32-32E 3.5"** | silkscreen *3.5" LCD Display / ESP32-32E 320x480 / Resistance Touch* | shared touch | ST7796, 320×480 |
+| **ESP32-32E 4.0"** | silkscreen *4.0" LCD Display / ESP32-32E 320x480 / Resistance Touch* | shared touch | ST7796, 320×480 |
+
+The ESP32-32E silkscreen is three lines — size, board name and resolution, *Resistance
+Touch* — shown here with `/` between them.
 
 **Own touch** means the XPT2046 touch chip has its own pins and the backlight is on
 GPIO21. **Shared touch** means the touch chip sits on the display's SPI bus and the

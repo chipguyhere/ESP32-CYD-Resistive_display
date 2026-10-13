@@ -25,8 +25,8 @@ and the topic files carry a `**TODO (bench):**` wherever that matters. The list 
 
 ## Identifying the board
 
-Generic "ESP32-32E" 2.8" board, silkscreen *2.8" LCD Display, ESP32-32E 240x320,
-Resistance Touch*, sold by several vendors. It is the ESP32-2432S028 CYD's display half
+Generic "ESP32-32E" 2.8" board, silkscreen *2.8" LCD Display / ESP32-32E 240x320 /
+Resistance Touch* (three lines), sold by several vendors. It is the ESP32-2432S028 CYD's display half
 (panel on HSPI, XPT2046 bit-banged, identical pin map — but the panel may be an ST7789,
 [below](#display-panel-variants)) with a redesigned power section:
 single USB-C connector, 2-pin lithium battery connector, TP4054 charger, discrete

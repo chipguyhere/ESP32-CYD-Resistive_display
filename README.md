@@ -7,9 +7,13 @@ by many vendors. One library runs all of these:
 | Board | Screen | Look for |
 |---|---|---|
 | **ESP32-2432S028** | 2.8", 240×320 | the original CYD; "ESP32-2432S028" on the back; micro-USB |
-| **ESP32-32E 2.8"** | 2.8", 240×320 | *ESP32-32E … Resistance Touch* on the back; USB-C; a tiny 2-pin battery connector |
-| **ESP32-32E 3.2"** | 3.2", 240×320 | *3.2" … ESP32-32E 240x320, Resistance Touch* on the back — the same wording as the 2.8", only the size differs |
-| **ESP32-32E 3.5" / 4.0"** | 320×480 | *ESP32-32E 320x480, Resistance Touch* on the back |
+| **ESP32-32E 2.8"** | 2.8", 240×320 | *2.8" LCD Display / ESP32-32E 240x320 / Resistance Touch* on the back; USB-C; a tiny 2-pin battery connector |
+| **ESP32-32E 3.2"** | 3.2", 240×320 | *3.2" LCD Display / ESP32-32E 240x320 / Resistance Touch* on the back |
+| **ESP32-32E 3.5"** | 3.5", 320×480 | *3.5" LCD Display / ESP32-32E 320x480 / Resistance Touch* on the back |
+| **ESP32-32E 4.0"** | 4.0", 320×480 | *4.0" LCD Display / ESP32-32E 320x480 / Resistance Touch* on the back |
+
+On the ESP32-32E boards that writing is three lines on the back of the board: the
+size, then the board name and resolution, then *Resistance Touch*.
 
 You don't tell the library which one you have: it checks when it starts and sets up
 the screen and touch to match. A sketch that cares — say, to blink the red LED, which
