@@ -8,7 +8,7 @@ by many vendors. One library runs all of these:
 |---|---|---|
 | **ESP32-2432S028** | 2.8", 240×320 | the original CYD; "ESP32-2432S028" on the back; micro-USB |
 | **ESP32-32E 2.8"** | 2.8", 240×320 | *ESP32-32E … Resistance Touch* on the back; USB-C; a tiny 2-pin battery connector |
-| **ESP32-32E 3.2"** | 3.2", 240×320 | *ESP32-32E*, resistive touch |
+| **ESP32-32E 3.2"** | 3.2", 240×320 | *3.2" … ESP32-32E 240x320, Resistance Touch* on the back — the same wording as the 2.8", only the size differs |
 | **ESP32-32E 3.5" / 4.0"** | 320×480 | *ESP32-32E 320x480, Resistance Touch* on the back |
 
 You don't tell the library which one you have: it checks when it starts and sets up
