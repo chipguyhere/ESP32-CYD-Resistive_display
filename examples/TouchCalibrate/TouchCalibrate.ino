@@ -1,6 +1,6 @@
 /*
  * TouchCalibrate - guided resistive-touch setup tool for the resistive-touch
- * CYD boards (ESP32-2432S028; ESP32-32E 2.8", 3.2", 3.5", 4.0"; the board is
+ * CYD boards (ESP32-2432S028; ESP32-32E 2.8", 3.2", 3.5", 4.0"; ESP32-024; the board is
  * detected at start-up).
  *
  * A standalone "tool" sketch you flash once, then flash your real application
@@ -40,7 +40,7 @@ chipguy_CYD_resistive_display display;
 chipguy_CYD_resistive_touch  touch;
 
 // Screen size in portrait, set from the detected panel in setup():
-// 240x320 (2.8", 3.2") or 320x480 (3.5", 4.0").
+// 240x320 (2.4", 2.8", 3.2") or 320x480 (3.5", 4.0").
 static int SCRW = 240;
 static int SCRH = 320;
 
@@ -268,8 +268,9 @@ static float runCalibration(int cols, int rows,
     linfit(gx, rawXs, n, ax, bx);   // rawX = ax + bx*Sx (X axis)
     linfit(gy, rawYs, n, ay, by);   // rawY = ay + by*Sy (Y axis)
 
-    // read() mirrors raw axes depending on the board (own-touch boards mirror
-    // X, the 3.2" both, the 3.5"/4.0" Y).  On a mirrored axis the max raw value is at
+    // read() mirrors raw axes depending on the board (own-touch boards and the
+    // ESP32-024 mirror X, the 3.2" both, the 3.5"/4.0" Y; the ESP32-024's
+    // readRaw() has already swapped its X and Y).  On a mirrored axis the max raw value is at
     // the screen's low edge (S=0) and the min at the high edge.
     const bool mx = touch.mirrorsX(), my = touch.mirrorsY();
     uint16_t rx0 = clampRaw(ax), rx1 = clampRaw(ax + bx * (SCRW - 1));   // rawX at left, right

@@ -31,10 +31,21 @@ switch**: its amplifier is always on, and GPIO4 is its red LED. `MP3Player` asks
 `display.redLedPin()` and leaves GPIO4 alone when it returns 4, so the same sketch runs
 there; the pop-free sequencing then rests on the DAC ramps alone.
 
+**The ESP32-024** is like the 2432S028 here: an amplifier with no switch — its shutdown
+pin is wired to ground — so it is always on, fed from the DAC on GPIO26, and GPIO4 is the
+red LED. (The board probed carries an LTK8002D; the schematic names an SC8002B, a
+compatible part.) It runs from the 3.3 V rail, so at full scale it may clip a little
+before the DAC runs out — **TODO (listen):** whether `setMaxSwing()` helps at top
+volume. [Details](README-engineering.md#the-esp32-024). `MP3Player` plays
+cleanly on it, with the red LED left dark **(listened, 2026-10-18)**. Because the
+amplifier is always on, anything that moves GPIO26 is heard: a sketch that sets pull-ups
+or pull-downs on it, or drives it as a plain GPIO, clicks the speaker.
+
 **GPIO25** is the touch clock only on the own-touch boards (2432S028, 32E 2.8"). On the
 3.2", 3.5" and 4.0" touch shares the display's bus and GPIO25 is not the library's — but
 something on those boards pulls it up, so the "channel 1 only" rule below still stands
-until that is known.
+until that is known. On the ESP32-024 GPIO25 has no pull-up, and a tone on it was not
+heard; where it goes is **TODO (bench)**.
 
 **The short version.** An 8-bit DAC on **GPIO26**, through a filter that rolls off above
 **~4 kHz**, into a small mono amplifier with fixed gain (about ×1.6, roughly half a watt

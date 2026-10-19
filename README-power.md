@@ -11,10 +11,28 @@ figure — the schematic, the part datasheets, the arithmetic — are in
 > **Which board.** Everything in this file is the **ESP32-32E 2.8"**. The
 > **ESP32-2432S028** has no battery connector and no power management: it runs from USB
 > or 5 V on its VIN pin, nothing on it can be powered down except the backlight, and even
-> deep sleep draws several mA. The **3.2"**, **3.5"** and **4.0"** boards' power hasn't
-> been examined — **TODO (bench)**; the 3.2"'s GPIO34 reads 2.1 V on USB, the same as the
-> 2.8" with no cell fitted, which hints at the same battery reading
+> deep sleep draws several mA. The **3.2"**, **3.5"** and **4.0"** boards each have a
+> battery connector and read the cell on **GPIO34** exactly as the 2.8" does — one cell
+> read 2.07 V on each, 2.08–2.12 V with none fitted (2026-10-18). The rest of their power
+> section hasn't been examined — **TODO (bench)**
 > ([Other boards](README-board.md#other-boards)).
+>
+> The **ESP32-024** has a battery connector, but its power section is a different design:
+> an **FM5324GA** "power bank" chip — lithium charger and 5 V booster in one — whose
+> output feeds two AMS1117 3.3 V regulators, one for the ESP32 and one for the screen
+> side. There is no battery reading: the cell never reaches an ESP32 pin, and GPIO34 is
+> the light sensor. **SW1** is the FM5324GA's key and isn't wired to the ESP32
+> (schematic; pressing it changed no GPIO). Observed on battery alone, 2026-10-18:
+>
+> - Plugging a cell in does **not** start the board; **one press of SW1** does.
+> - Another single press, or holding it (2–10 s), does nothing.
+> - **Two quick presses turn the board off.**
+>
+> So a person can switch it on and off, but a sketch can neither do that nor see the
+> button. **TODO (bench):** whether the FM5324GA also switches itself off when the
+> board draws little (power-bank chips often do, which would end a deep sleep for good),
+> the deep-sleep current, and charging behavior. The chip's three level-LED outputs are
+> unconnected, so there is no charge light.
 
 **The short version.** This is the ESP32-2432S028 CYD with a battery added, and added
 properly. A 2-pin connector takes a single lithium cell; a **TP4054** charger fills it

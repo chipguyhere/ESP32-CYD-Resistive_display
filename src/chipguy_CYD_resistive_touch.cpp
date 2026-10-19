@@ -14,6 +14,7 @@
 #define CYDR_TOUCH_NVS_NS_OWN        "e32e28touch"   // own-touch, 240x320 (2432S028, 32E 2.8")
 #define CYDR_TOUCH_NVS_NS_SHARED_480 "e32etouch"     // shared-touch, 320x480 (3.5", 4.0")
 #define CYDR_TOUCH_NVS_NS_SHARED_320 "e32e32touch"   // shared-touch, 240x320 (3.2")
+#define CYDR_TOUCH_NVS_NS_024        "e32024touch"   // shared-touch, 240x320, X/Y swapped (ESP32-024)
 #define CYDR_TOUCH_NVS_XMIN "xmin"
 #define CYDR_TOUCH_NVS_XMAX "xmax"
 #define CYDR_TOUCH_NVS_YMIN "ymin"
@@ -86,6 +87,7 @@ bool chipguy_CYD_resistive_touch::_setup(cydr_board_t board, cydr_panel_t panel)
     // IRQ is GPIO36, an input-only pin with NO internal pull resistor; the
     // XPT2046's PENIRQ drives it high when idle, low when touched.
     pinMode(CYDR_TOUCH_IRQ, INPUT);
+    _swapXY = false;
 
     if (_board == CYDR_BOARD_SHARED_TOUCH) {
         if (panel == CYDR_PANEL_ST7796) {
@@ -94,9 +96,20 @@ bool chipguy_CYD_resistive_touch::_setup(cydr_board_t board, cydr_panel_t panel)
             // (Measured on hardware for chipguy_ESP32-32E_CYD_4inch_display.)
             _mirrorX = false; _mirrorY = true;
             _nvsNs = CYDR_TOUCH_NVS_NS_SHARED_480;
+        } else if (cydr_activeModel() == CYDR_MODEL_024) {
+            // ESP32-024: the XPT2046's X and Y run along the panel's rows and
+            // columns, so the raw pair is swapped in _readRawSample().  After
+            // the swap raw X runs opposite the panel's X and raw Y matches,
+            // as on the own-touch boards (bench, 2026-10-18).
+            _nativeW = 240; _nativeH = 320;
+            _swapXY = true;
+            _mirrorX = true; _mirrorY = false;
+            _nvsNs = CYDR_TOUCH_NVS_NS_024;
         } else {
             // 3.2": 240x320 panel on the shared wiring.  Both raw axes run
-            // opposite the panel's (bench, 2026-10-13).
+            // opposite the panel's (bench, 2026-10-13).  Also the guess when
+            // the model is unknown (touch begun without a display, or no
+            // GPIO4 reading).
             _nativeW = 240; _nativeH = 320;
             _mirrorX = true; _mirrorY = true;
             _nvsNs = CYDR_TOUCH_NVS_NS_SHARED_320;
@@ -291,6 +304,7 @@ bool chipguy_CYD_resistive_touch::_readRawSample(uint16_t &rawX, uint16_t &rawY)
     if (!_spi) digitalWrite(CYDR_TOUCH_CS, HIGH);
 
     uint16_t xpos = rawX;                  // median X position for the formula
+    if (_swapXY) { rawX = rawY; rawY = xpos; }   // ESP32-024: report in panel orientation
     float p = 0.0f;
     if (z1 > 0 && xpos > 0) {
         if (z2 <= z1) {

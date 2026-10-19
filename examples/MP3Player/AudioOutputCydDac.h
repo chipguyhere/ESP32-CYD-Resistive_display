@@ -30,7 +30,8 @@
  *     only after the ramp above has settled at mid-scale and off before
  *     ramping back down, so the DAC's enable/disable steps are never
  *     amplified.  setAmpEnabled() lets the player mute it while paused or
- *     stopped.  (The ESP32-2432S028 has no such pin; its amp is always on.)
+ *     stopped.  (The ESP32-2432S028 and ESP32-024 have no such pin; their
+ *     amps are always on.)
  *   - Optional TPDF dither with first-order noise shaping.  Undithered, an
  *     8-bit DAC turns quiet passages into random clicks: each 1-LSB code step
  *     of a slowly-moving signal is a discrete edge, always the same size
@@ -70,7 +71,7 @@ public:
     // Amplifier shutdown: GPIO4, LOW = amplifier on.  See README-sound.md.
     static constexpr int kAmpEnablePin = 4;
 
-    // The ESP32-32E boards have the shutdown pin; on the ESP32-2432S028 GPIO4
+    // The ESP32-32E boards have the shutdown pin; on the ESP32-2432S028 and ESP32-024 GPIO4
     // is the red LED instead and the amp is always on.  Told apart by the red
     // LED's pin, which display.begin() has already latched.
     static bool hasAmpPin() { return cydr_redLedPin() != 4; }
@@ -122,7 +123,7 @@ public:
 
     // Amplifier on/off (GPIO4, active LOW).  Only meaningful while the DAC is
     // running; ensureRunning()/teardown() sequence it around the ramps.
-    // No-op on the ESP32-2432S028, which has no such pin.
+    // No-op on the ESP32-2432S028 and ESP32-024, which have no such pin.
     void setAmpEnabled(bool on) {
         if (hasAmpPin()) digitalWrite(kAmpEnablePin, on ? LOW : HIGH);
         _ampOn = on;

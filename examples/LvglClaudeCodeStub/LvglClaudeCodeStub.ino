@@ -1,8 +1,9 @@
 /*******************************************************************************
  * Resistive-touch CYD LVGL Claude Code Stub
  *
- * For the resistive-touch "Cheap Yellow Display" boards: ESP32-2432S028 and
- * ESP32-32E 2.8", 3.2", 3.5", 4.0" (XPT2046 touch; panel detected at start-up).
+ * For the resistive-touch "Cheap Yellow Display" boards: ESP32-2432S028,
+ * ESP32-32E 2.8", 3.2", 3.5", 4.0", and ESP32-024 2.4" (XPT2046 touch; board
+ * and panel detected at start-up).
  *
  * A minimal starting point for building an LVGL application from scratch on
  * this hardware.  The UI lives in a tiny ui.h / ui.cpp pair in the sketch

@@ -1,6 +1,6 @@
 /*
  * ILI9341 / ST7789 / ST7796 SPI display driver for the resistive-touch CYD
- * family (ESP32-2432S028; ESP32-32E 2.8", 3.2", 3.5", 4.0").
+ * family (ESP32-2432S028; ESP32-32E 2.8", 3.2", 3.5", 4.0"; ESP32-024).
  * See chipguy_CYD_resistive_display.h for the wiring and usage overview.
  */
 
@@ -40,6 +40,8 @@ static cydr_board_t _cydr_activeBoard = CYDR_BOARD_UNKNOWN;
 cydr_board_t cydr_activeBoard() { return _cydr_activeBoard; }
 static cydr_panel_t _cydr_activePanel = CYDR_PANEL_AUTO;
 cydr_panel_t cydr_activePanel() { return _cydr_activePanel; }
+static cydr_model_t _cydr_activeModel = CYDR_MODEL_UNKNOWN;
+cydr_model_t cydr_activeModel() { return _cydr_activeModel; }
 
 // CS is driven by the SPI peripheral (hardware CS), but DC is a plain GPIO.
 // The driver calls this just before each transaction goes on the bus — for
@@ -83,10 +85,11 @@ void chipguy_CYD_resistive_display::_data8(uint8_t val) {
 // Each board holds its backlight driver's input LOW with an external
 // pull-down that overpowers the ESP32's internal pull-up: GPIO21 on the
 // own-touch boards (2432S028, 32E 2.8"), GPIO27 on the shared-touch boards
-// (32E 3.2", 3.5", 4.0").  On the other wiring the same pin floats (32E 2.8":
-// GPIO27 is the SPI header's CS) or is pulled up (2432S028: GPIO27; 3.2":
-// GPIO21).  Measured on one board of each, 2026-10-13: the pulled-down pin
-// reads 0.13 V with the internal pull-up on.
+// (32E 3.2", 3.5", 4.0", ESP32-024).  On the other wiring the same pin floats
+// (32E 2.8": GPIO27 is the SPI header's CS; 3.2": GPIO21) or is pulled up
+// (2432S028: GPIO27; ESP32-024: GPIO21).  Measured on one board of each,
+// 2026-10-13: the pulled-down pin reads 0.13 V with the internal pull-up on
+// (0.77 V on the ESP32-024, 2026-10-18 — a weaker pull-down, still a clear LOW).
 
 static int _cydr_readWithPullup(int pin) {
     gpio_reset_pin((gpio_num_t)pin);
@@ -107,9 +110,11 @@ cydr_board_t cydr_detectBoardPassive() {
 }
 
 // ── Red LED pin (GPIO4 vs GPIO22) ──────────────────────────────────────────
-// With the internal pull-down on, GPIO4 reads ~1.64 V on the 2432S028 (the
-// red LED's diode drop from 3.3 V) and ~2.50 V on the 32E boards (the amp
-// shutdown pull-up against the internal pull-down); 2.0 V splits them.
+// With the internal pull-down on, GPIO4 reads ~1.64 V on the 2432S028 and
+// ~1.60 V on the ESP32-024 (the red LED's diode drop from 3.3 V) and ~2.50 V
+// on the 32E boards (the amp shutdown pull-up against the internal
+// pull-down); 2.0 V splits them.  Measured on every wiring: the ESP32-024 has
+// the shared-touch wiring and the red LED on GPIO4.
 // See README-board-detection.md.  A failed ADC2 read (WiFi running) comes
 // back as 0, so anything under 500 mV is treated as no reading.
 
@@ -129,10 +134,6 @@ static uint32_t _cydr_gpio4PulldownMillivolts() {
 
 int8_t cydr_redLedPin() {
     if (_cydr_redLed >= 0) return _cydr_redLed;
-    // The 2432S028 has the own-pins touch wiring: a shared-bus board is a 32E
-    // without asking.
-    if (_cydr_activeBoard == CYDR_BOARD_SHARED_TOUCH) return _cydr_redLed = 22;
-
     uint32_t mv = _cydr_gpio4PulldownMillivolts();
     if (mv >= 500) {
         _cydr_redLedMv = mv;
@@ -146,6 +147,17 @@ int8_t cydr_redLedPin() {
 }
 
 uint32_t cydr_redLedProbeMillivolts() { return _cydr_redLedMv; }
+
+// Green / blue: 16 / 17 everywhere but the ESP32-024 (17 / 16; seen against the
+// screen on all six boards, 2026-10-18).  An unknown model is still answerable
+// on own-touch wiring, where both candidates (2432S028, 32E 2.8") use 16 / 17.
+static bool _cydr_gbKnown(bool &swapped) {
+    swapped = _cydr_activeModel == CYDR_MODEL_024;
+    if (_cydr_activeModel != CYDR_MODEL_UNKNOWN) return true;
+    return _cydr_activeBoard == CYDR_BOARD_OWN_TOUCH;
+}
+int8_t cydr_greenLedPin() { bool sw; return _cydr_gbKnown(sw) ? (sw ? 17 : 16) : -1; }
+int8_t cydr_blueLedPin()  { bool sw; return _cydr_gbKnown(sw) ? (sw ? 16 : 17) : -1; }
 
 // ── Panel detection ────────────────────────────────────────────────────────
 // Runs before the SPI peripheral owns the pins, so it bit-bangs (~200 kHz,
@@ -288,6 +300,28 @@ const char *chipguy_CYD_resistive_display::panelName() const {
     }
 }
 
+const char *chipguy_CYD_resistive_display::modelName() const {
+    switch (_model) {
+        case CYDR_MODEL_2432S028:  return "ESP32-2432S028";
+        case CYDR_MODEL_32E_28:    return "ESP32-32E 2.8\"";
+        case CYDR_MODEL_32E_32:    return "ESP32-32E 3.2\"";
+        case CYDR_MODEL_32E_35_40: return "ESP32-32E 3.5\"/4.0\"";
+        case CYDR_MODEL_024:       return "ESP32-024 2.4\"";
+        default:                   return "unknown";
+    }
+}
+
+// The wiring, panel and red LED pin together name the board.  -1 (no GPIO4
+// reading) leaves the 240x320 boards unknown.
+static cydr_model_t _cydr_modelFrom(cydr_board_t board, cydr_panel_t panel, int8_t redLed) {
+    if (board == CYDR_BOARD_SHARED_TOUCH && panel == CYDR_PANEL_ST7796)
+        return CYDR_MODEL_32E_35_40;
+    if (redLed < 0) return CYDR_MODEL_UNKNOWN;
+    if (board == CYDR_BOARD_SHARED_TOUCH)
+        return redLed == 4 ? CYDR_MODEL_024 : CYDR_MODEL_32E_32;
+    return redLed == 4 ? CYDR_MODEL_2432S028 : CYDR_MODEL_32E_28;
+}
+
 // ── Power-on init sequences ────────────────────────────────────────────────
 // MADCTL is written here as a placeholder and then re-issued by setRotation().
 
@@ -323,9 +357,12 @@ void chipguy_CYD_resistive_display::_initILI9341() {
 }
 
 // ST7789: the power-on defaults are right for these panels, so only the pixel
-// format and display state are set.  The 2.8" panel shows correct colors with
-// inversion OFF, unlike most ST7789 IPS modules; the 3.2" (shared-touch
-// wiring) needs it ON — without INVON it shows inverse video (bench, 2026-10-13).
+// format and display state are set.  The 2.8" and 2.4" panels show correct
+// colors with inversion OFF, unlike most ST7789 IPS modules; the 3.2" needs it
+// ON — without INVON it shows inverse video (bench, 2026-10-13), and with it
+// the 2.4" does (bench, 2026-10-18).  The 3.2" is the only shared-touch ST7789
+// with an amplifier on GPIO4, so a board whose model is unknown (no GPIO4
+// reading) keeps the 3.2"'s INVON as before.
 void chipguy_CYD_resistive_display::_initST7789() {
     _cmd(0x01);                            // Software reset
     delay(150);
@@ -333,7 +370,8 @@ void chipguy_CYD_resistive_display::_initST7789() {
     delay(120);
     _cmd(0x3A); _data8(0x55);              // Pixel format: 16-bit RGB565
     _cmd(0x36); _data8(0x00);              // MADCTL (overwritten by setRotation)
-    _cmd(_board == CYDR_BOARD_SHARED_TOUCH ? 0x21 : 0x20);   // Inversion on (3.2") / off (2.8")
+    bool invon = _board == CYDR_BOARD_SHARED_TOUCH && _model != CYDR_MODEL_024;
+    _cmd(invon ? 0x21 : 0x20);             // Inversion on (3.2") / off (2.8", 2.4")
     _cmd(0x13);                            // Normal display mode
     _cmd(0x29);                            // Display on
     delay(20);
@@ -439,7 +477,10 @@ bool chipguy_CYD_resistive_display::begin(uint16_t rotation) {
     }
     _cydr_activeBoard = _board;
     _cydr_activePanel = _panel;
-    cydr_redLedPin();         // latch it now, while ADC2 is still ours (before WiFi)
+    // Latch the red LED pin now, while ADC2 is still ours (before WiFi); it
+    // names the board, and the ST7789 init depends on which.
+    _model = _cydr_modelFrom(_board, _panel, cydr_redLedPin());
+    _cydr_activeModel = _model;
 
     if (_panel == CYDR_PANEL_ST7796) { _nativeW = 320; _nativeH = 480; }
     else                               { _nativeW = 240; _nativeH = 320; }

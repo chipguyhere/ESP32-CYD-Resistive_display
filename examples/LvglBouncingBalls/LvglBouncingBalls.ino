@@ -1,8 +1,9 @@
 /*******************************************************************************
  * Resistive-touch CYD LVGL Bouncing Balls
  *
- * For the resistive-touch "Cheap Yellow Display" boards: ESP32-2432S028 and
- * ESP32-32E 2.8", 3.2", 3.5", 4.0" (XPT2046 touch; panel detected at start-up).
+ * For the resistive-touch "Cheap Yellow Display" boards: ESP32-2432S028,
+ * ESP32-32E 2.8", 3.2", 3.5", 4.0", and ESP32-024 2.4" (XPT2046 touch; board
+ * and panel detected at start-up).
  *
  * A resolution-independent demo: 1..20 circular balls bounce under gravity,
  * each a random color, re-launching to a random height on every floor bounce.

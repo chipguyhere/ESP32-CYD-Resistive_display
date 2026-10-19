@@ -1,8 +1,9 @@
 /*******************************************************************************
  * Resistive-touch CYD LVGL 9.3 Squareline Launcher
  *
- * For the resistive-touch "Cheap Yellow Display" boards: ESP32-2432S028 and
- * ESP32-32E 2.8", 3.2", 3.5", 4.0" (XPT2046 touch; panel detected at start-up).
+ * For the resistive-touch "Cheap Yellow Display" boards: ESP32-2432S028,
+ * ESP32-32E 2.8", 3.2", 3.5", 4.0", and ESP32-024 2.4" (XPT2046 touch; board
+ * and panel detected at start-up).
  *
  * Demonstrates touchscreen, LVGL 9.3 and a Squareline Studio UI.
  *

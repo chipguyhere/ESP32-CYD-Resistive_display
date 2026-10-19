@@ -4,16 +4,46 @@ The card slot's wiring, so a sketch can mount it with whichever driver it prefer
 library does not drive the slot and does not include a filesystem. The board has a
 microSD (TF) slot wired for **SPI mode only**.
 
-Written for the **ESP32-32E 2.8"**. The **ESP32-2432S028**'s slot is on the same pins
-(GPIO5 / 18 / 19 / 23). The **3.2"** mounted a card with `SD.begin(5)` and played MP3s
-from it through `MP3Player` (2026-10-13), so its slot is at least on the same CS and
-VSPI pins; pull-ups and the SPI header there are **TODO (bench)**, as is everything on
-the 3.5" and 4.0". On the 3.2", 3.5" and 4.0" the touch chip shares the display's HSPI
-bus rather than being bit-banged, which changes nothing for the card — but **GPIO27 is
-their backlight**, so the 2.8"'s "IO27 as the SPI header's chip-select" below does not
-carry over. What their headers carry is **TODO (bench)**.
+## Every board: the same four pins
 
-## Pinout
+**All five boards this library supports put the card on the same pins — CS GPIO5, SCK
+GPIO18, MISO GPIO19, MOSI GPIO23 — and the same call mounts it on every one of them.**
+That is tested, not inferred: the bundled **`MP3Player`** example mounts the card and
+plays MP3s from it on each board, with no per-board code. Its mount is in
+`examples/MP3Player/player.cpp` (`player_begin()`), and is the reference for any sketch
+that wants the card:
+
+```cpp
+#include <SPI.h>
+#include <SD.h>
+// After lv_setup.begin() (or before — the card's bus is separate from the display's).
+// The default SPI object is VSPI on 18/19/23; no setPins(), no board check.
+if (!SD.begin(/*cs*/ 5, SPI, 20000000)) {     // 20 MHz for audio streaming
+    SD.end();
+    SD.begin(5, SPI, 4000000);                // fall back to the 4 MHz default
+}
+```
+
+| Board | Card pins (CS / SCK / MISO / MOSI) | Mount tested with `MP3Player` | Pull-ups, SPI header |
+|---|---|---|---|
+| ESP32-32E 2.8" | 5 / 18 / 19 / 23 | **yes** | on the board; header documented below |
+| ESP32-2432S028 | 5 / 18 / 19 / 23 | **yes** | **TODO (bench)** |
+| ESP32-32E 3.2" | 5 / 18 / 19 / 23 | **yes** | **TODO (bench)** |
+| ESP32-32E 3.5" | 5 / 18 / 19 / 23 | **yes** | **TODO (bench)** |
+| ESP32-32E 4.0" | 5 / 18 / 19 / 23 | **yes** | **TODO (bench)** |
+| ESP32-024 | 5 / 18 / 19 / 23 | **yes** | GPIO5, 19 and 23 pulled up on the board, 18 not (as the 32E 2.8"); header **TODO (bench)** |
+
+A sketch that runs on more than one of these boards does **not** need to ask
+[which board it's on](README-board-detection.md) before mounting the card.
+
+What differs between boards is only *around* the slot. On the 3.2", 3.5", 4.0" and ESP32-024 the
+touch chip shares the display's HSPI bus rather than being bit-banged — which changes
+nothing for the card, since the card is on VSPI. But **GPIO27 is their backlight**, so
+the 2.8"'s "IO27 as the SPI header's chip-select" below does not carry over; what their
+headers carry is **TODO (bench)**. The rest of this file — pull-ups, the header, the
+pinout's schematic detail — was written from the **ESP32-32E 2.8"**'s schematic.
+
+## Pinout (from the ESP32-32E 2.8" schematic)
 
 | Slot pin | GPIO | SPI role | Notes |
 |---|---|---|---|

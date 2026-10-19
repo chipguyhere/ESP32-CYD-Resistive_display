@@ -7,7 +7,7 @@
  *
  * Plays *.mp3 from the root of the microSD card through the board's speaker
  * (8-bit DAC on GPIO26 -> amplifier, switched on via GPIO4 on the ESP32-32E
- * boards; always on on the ESP32-2432S028), with an
+ * boards; always on on the ESP32-2432S028 and ESP32-024), with an
  * LVGL touch UI: a track
  * list, prev/play-pause/next/stop, a volume slider, and — on a screen behind a
  * long-press of the "8" in the click-wheel view's corner — a checkbox that switches

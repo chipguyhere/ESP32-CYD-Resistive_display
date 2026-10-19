@@ -19,6 +19,8 @@
 #include <freertos/queue.h>
 
 // microSD slot: CS on GPIO5, data on the default VSPI pins (18/19/23).
+// Same wiring on every board this library supports (2432S028, 32E 2.8" /
+// 3.2" / 3.5" / 4.0", ESP32-024), so this mount needs no board check.
 // SD.begin() defaults to a 4 MHz clock; the on-board slot is a short trace
 // and runs fine faster, and slow reads are what cause DAC underruns.
 static constexpr int kSdCs = 5;
@@ -235,7 +237,7 @@ bool player_begin() {
     // Amplifier off first (GPIO4, active LOW; the board's 10 k pull-up has it
     // off already, this just makes it explicit).  The output class turns it
     // on once the DAC is running and parked at mid-scale.  Not on the
-    // ESP32-2432S028, where GPIO4 is the red LED.
+    // ESP32-2432S028 or ESP32-024, where GPIO4 is the red LED.
     if (AudioOutputCydDac::hasAmpPin()) {
         pinMode(AudioOutputCydDac::kAmpEnablePin, OUTPUT);
         digitalWrite(AudioOutputCydDac::kAmpEnablePin, HIGH);
