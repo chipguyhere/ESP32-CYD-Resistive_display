@@ -80,20 +80,48 @@ project uses **one or the other**, so it's worth choosing first.
 | What you write | Buttons, sliders, labels, screens | `print()` and `printf()` |
 | Looks like | A phone app | A computer's text console, in color |
 | Orientation | Any — portrait or landscape | Portrait only (either way up) |
+| Scrolling | Any direction, but every frame is redrawn | Up and down only, and extremely fast |
 | Extra library | LVGL 9, from the Library Manager | None |
-| Memory it takes | Tens of KB of RAM for drawing | About 5 KB of RAM |
-| Good for | Control panels, games, anything you'd draw | Logs, readings, menus, status screens |
+| Memory it takes | Tens of KB of RAM for drawing, more as screens grow | About 5 KB of RAM, fixed — it never grows |
+| Good for | Control panels, dashboards, sensor displays, games | A stream of text: logs, event feeds, a console |
 | Guide | **[README-lvgl.md](README-lvgl.md)** | **[README-terminal.md](README-terminal.md)** |
 
 **LVGL** is the choice for a real graphical interface. You lay out widgets, by hand,
-with an AI assistant, or visually in SquareLine Studio, and LVGL draws them.
+with an AI assistant, or visually in SquareLine Studio, and LVGL draws them. A screen
+that *shows* things — a temperature, a set of readings that update in place, buttons
+and settings — is an LVGL app.
 
-**The text terminal** is the choice when your project mostly *says things*: sensor
-readings, a log of what's happening, a simple menu. Text scrolls up the screen the way
-it does on a computer, very fast, because the screen's own hardware does the scrolling.
-It has colors, symbols, a blinking cursor, touch, and pictures for a header or footer —
-but it only works with the screen upright (portrait). For a sideways (landscape) screen,
-use LVGL.
+**The text terminal** is the choice when your project *streams* text: a log of what's
+happening, a feed of events as they arrive, the kind of output you'd otherwise watch
+on the serial monitor. New lines come in at the bottom and the rest scrolls up, very
+fast, because the screen's own hardware does the scrolling. It has colors, symbols, a
+blinking cursor, touch, and pictures for a header or footer — but it only works with
+the screen upright (portrait). For a sideways (landscape) screen, use LVGL.
+
+**Its memory use is small and never changes.** The terminal takes about 5 KB of RAM,
+all set aside when it starts, and asks for no more however much you print. These
+boards have no extra memory chip (no PSRAM), so that matters when the same sketch
+also runs Wi-Fi, a web server, MQTT or anything else that needs memory: the screen
+can't be the thing that runs the board out of it, and how much is left stays
+predictable.
+
+### Scrolling: the biggest difference
+
+Both can scroll, but in very different ways.
+
+**LVGL** scrolls anything — a list, a page, a picture — in any direction, with the
+screen any way round. To do it, it redraws everything that moved and sends it to the
+screen again. With these boards' small screens that is still quick. But imitating a
+console in LVGL — a label or list that keeps growing, old lines removed as new ones
+arrive — means creating and freeing objects all the time, and redrawing whatever the
+text sits on top of; that costs memory and time the terminal doesn't spend.
+
+**The text terminal** doesn't redraw at all when it scrolls. The screen's own
+hardware slides the picture up, and the board only draws the one new line coming in
+at the bottom. That makes it extremely fast — over 100 lines a second on the 2.4",
+2.8" and 3.2" boards, about 90 on the 3.5" and 4.0" — but the hardware can only slide
+the picture along the screen's long side. So the terminal scrolls up and down, with
+the board upright, and nothing else.
 
 Each guide lists its own examples. They all open from **File ▸ Examples ▸
 chipguy_ESP32-CYD-Resistive_display**: the `Lvgl…` ones are LVGL, the `Terminal…`

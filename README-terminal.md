@@ -6,8 +6,12 @@ of character cells and scrolls up the screen as it fills. If you haven't chosen 
 the [README](README.md#two-ways-to-drive-the-screen--pick-one) compares it with the
 other way, [LVGL](README-lvgl.md).
 
-It needs no other library, takes about 5 KB of RAM, and scrolls very fast: the screen's
-own hardware moves the picture, so the ESP32 only ever draws the new line.
+It needs no other library and scrolls very fast: the screen's own hardware moves the
+picture, so the ESP32 only ever draws the new line. It takes about 5 KB of RAM, all
+reserved at start-up, and never asks for more — useful on these boards, which have no
+extra memory chip, when the sketch also runs Wi-Fi or anything else memory-hungry.
+It's made for a **stream** of text; for readings that update in place, a dashboard
+in [LVGL](README-lvgl.md) is usually the better fit.
 
 > **Portrait only.** The screen's hardware can only scroll along its long side. With
 > the board upright (portrait) that moves text up the screen, which is what a terminal
