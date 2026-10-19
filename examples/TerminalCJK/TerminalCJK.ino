@@ -3,8 +3,9 @@
  * resistive-touch CYD (ESP32-2432S028; ESP32-32E 2.8", 3.2", 3.5", 4.0";
  * ESP32-024).
  *
- * CJK characters take two cells each.  A double-width character that won't
- * fit at the end of a line moves to the next one whole, scrolling if needed.
+ * CJK characters take two cells each; half-width katakana (ｶﾀｶﾅ), one.  A
+ * double-width character that won't fit at the end of a line moves to the
+ * next one whole, scrolling if needed.
  *
  * ── FLASH: THIS EXAMPLE IS BIG ON PURPOSE ────────────────────────────────
  * The CJK glyphs are an OPT-IN font, and a large one.  Pick ONE of the
@@ -16,10 +17,11 @@
  * the font include alone adds the flash shown below.  Start from
  * TerminalHello instead.
  *
- * Anything but the Korean font needs a partition scheme with a 3 MB app
- * slot on these 4 MB boards: Tools > Partition Scheme > "Huge APP (3MB No
- * OTA/1MB SPIFFS)", or PartitionScheme=huge_app in the --fqbn.  Korean alone
- * (~0.6 MB) fits the default scheme's 1.2 MB slot.
+ * Anything but the Korean or the kana-only Japanese font needs a partition
+ * scheme with a 3 MB app slot on these 4 MB boards: Tools > Partition Scheme >
+ * "Huge APP (3MB No OTA/1MB SPIFFS)", or PartitionScheme=huge_app in the
+ * --fqbn.  Korean alone (~0.6 MB) and kana-only Japanese (~66 KB) fit the
+ * default scheme's 1.2 MB slot.
  */
 
 // All three languages, ~2.2 MB.  Han characters in Simplified Chinese forms,
@@ -36,6 +38,12 @@
 // #include <cydr_font_mono16_ja.h>
 // #define CJK_FONT cydr_font_mono16_ja
 
+// Japanese without kanji (hiragana, katakana, half-width katakana), ~66 KB;
+// fits the default partition scheme.  The kanji in the text below would
+// print as replacement characters:
+// #include <cydr_font_mono16_ja_kana.h>
+// #define CJK_FONT cydr_font_mono16_ja_kana
+
 // Korean only (the 2350 everyday Hangul syllables), ~0.6 MB:
 // #include <cydr_font_mono16_ko.h>
 // #define CJK_FONT cydr_font_mono16_ko
@@ -50,6 +58,8 @@ static const Greeting kText[] = {
     {"中文",   "你好，世界！今天天气很好。"},
     {"日本語", "こんにちは、世界。カタカナとひらがな、漢字。"},
     {"한국어", "안녕하세요, 세계! 오늘 날씨가 좋네요."},
+    // Half-width katakana, one cell each (in the Japanese and all-three fonts).
+    {"半角", "ﾊﾝｶｸ ｶﾀｶﾅ ﾓ ﾂｶｴﾏｽ｡"},
 };
 
 void setup() {

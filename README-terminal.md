@@ -52,6 +52,7 @@ Open them from **File ▸ Examples ▸ chipguy_ESP32-CYD-Resistive_display**.
 | **TerminalHeaderFooter** | A picture at the top and bottom of the screen that stays put while text scrolls between them. |
 | **TerminalSymbols** | Every LVGL symbol the terminal can print, with its name. |
 | **TerminalCJK** | Chinese, Japanese and Korean. Uses a lot of flash on purpose — see [CJK](#chinese-japanese-and-korean). |
+| **TerminalMatrixRain** | The green "digital rain" from *The Matrix*, in half-width katakana. |
 
 ---
 
@@ -220,10 +221,11 @@ what you print:
 
 | Include | Covers | Flash it adds |
 |---|---|---|
-| `cydr_font_mono16_ko.h` | Korean: the 2,350 everyday Hangul syllables | about 0.6 MB |
-| `cydr_font_mono16_ja.h` | Japanese: the 2,965 common kanji, hiragana, katakana | about 1.0 MB |
+| `cydr_font_mono16_ja_kana.h` | Japanese without kanji: hiragana, katakana, half-width katakana | about 66 KB |
+| `cydr_font_mono16_ko.h` | Korean: the 2,350 everyday Hangul syllables, and half-width jamo | about 0.6 MB |
+| `cydr_font_mono16_ja.h` | Japanese: the 2,965 common kanji, hiragana, katakana, and half-width katakana | about 1.0 MB |
 | `cydr_font_mono16_zh.h` | Chinese: the 3,755 common simplified characters | about 1.2 MB |
-| `cydr_font_mono16_cjk.h` | All three (Japanese kanji drawn the Chinese way) | about 2.2 MB |
+| `cydr_font_mono16_cjk.h` | All three, half-width forms included (Japanese kanji drawn the Chinese way) | about 2.2 MB |
 
 ```cpp
 #include <cydr_font_mono16_ja.h>
@@ -232,8 +234,10 @@ what you print:
 term.begin(display, 0, &cydr_font_mono16_ja);
 ```
 
-The CJK font includes everything in the built-in font as well. Except for Korean
-alone, it is too big for the board's normal program space: in **Tools ▸ Partition
+Half-width characters (ｶﾀｶﾅ) take one cell, like Latin letters; everything else in
+these fonts takes two. The CJK font includes everything in the built-in font as well.
+Except for Korean alone and Japanese without kanji, it is too big for the board's
+normal program space: in **Tools ▸ Partition
 Scheme**, choose **"Huge APP (3MB No OTA/1MB SPIFFS)"**. **TerminalCJK** shows all
 three languages.
 

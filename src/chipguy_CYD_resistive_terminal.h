@@ -319,11 +319,16 @@ extern const cydr_font_t cydr_font_mono16;
 // header so a sketch pays only for what it includes.  Each falls back to
 // cydr_font_mono16 for everything else, so it replaces it in setFont():
 //   cydr_font_mono16_zh.h   Chinese (GB2312 level-1 hanzi)        ~1.2 MB flash
-//   cydr_font_mono16_ja.h   Japanese (JIS level-1 kanji, kana)    ~1.0 MB flash
-//   cydr_font_mono16_ko.h   Korean (KS X 1001 Hangul)             ~0.6 MB flash
+//   cydr_font_mono16_ja.h   Japanese (JIS level-1 kanji, kana,
+//                           half-width katakana)                  ~1.0 MB flash
+//   cydr_font_mono16_ja_kana.h  Japanese without kanji (kana,
+//                           half-width katakana)                  ~66 KB flash
+//   cydr_font_mono16_ko.h   Korean (KS X 1001 Hangul, half-width
+//                           jamo)                                 ~0.6 MB flash
 //   cydr_font_mono16_cjk.h  all three (Chinese glyph forms)       ~2.2 MB flash
-// On a 4 MB board anything but Korean needs a partition scheme with a 3 MB
-// app slot (PartitionScheme=huge_app).  See the TerminalCJK example.
+// Half-width forms take one cell; the rest of these fonts, two.
+// On a 4 MB board anything but Korean or kana-only Japanese needs a
+// partition scheme with a 3 MB app slot (PartitionScheme=huge_app).  See the TerminalCJK example.
 
 // ── Colors (RGB565) ────────────────────────────────────────────────────────
 static constexpr uint16_t cydr_rgb565(uint8_t r, uint8_t g, uint8_t b) {
