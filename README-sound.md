@@ -1,5 +1,20 @@
 # Resistive-touch CYD boards — sound
 
+**Start here if you just want to play music.** This library doesn't include a sound
+driver, meaning ready-made code you call to make noise. It comes with one working
+example instead: **MP3Player**. Install the **ESP8266Audio** library from the Library
+Manager, copy some MP3 files onto a microSD card (not in a folder), put the card in the
+board and upload the example. It lists your songs on the screen and plays them through
+the speaker. If that's all you need, you can stop reading here.
+
+**The rest of this page gets technical.** It is for an experienced programmer, or for an
+AI assistant you hand this page to, who wants to make sound in other ways: beeps,
+alarms, short recorded clips, or a different player. Sound on this board is easy to get
+slightly wrong, for example by breaking the touch screen or making the speaker pop. The
+sections below explain how to avoid that.
+
+---
+
 How to get a beep, a sample or an MP3 out of the speaker without breaking anything
 else. Written for the **ESP32-32E 2.8"**; how the other boards differ is just below. Answered against the same questionnaire as the family's other
 `README-sound.md` files (`../README-sound.md`), so a "No" is a fact about the board.

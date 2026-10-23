@@ -58,8 +58,8 @@ public:
     // X; shared-touch 240x320 (3.2"): both; 320x480: Y).  TouchCalibrate uses these to fit the calibration.
     bool mirrorsX() const { return _mirrorX; }
     bool mirrorsY() const { return _mirrorY; }
-    // True on the ESP32-024, whose XPT2046 X and Y channels are swapped
-    // relative to the panel.  readRaw() has already swapped them back, so
+    // True on the ST7789 ESP32-024, whose XPT2046 X and Y channels are
+    // swapped relative to the panel (the ILI9341 one's aren't).  readRaw() has already swapped them back, so
     // calibration code needs no special case.
     bool swapsXY() const { return _swapXY; }
 

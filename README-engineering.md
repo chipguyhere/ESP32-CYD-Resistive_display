@@ -133,8 +133,8 @@ GPIO34 at 2.10 V on USB, as on the 32E 2.8" with no cell.
 
 The touch calibration lives in one NVS namespace per wiring + panel size, so a sketch
 moved between boards doesn't carry the wrong rectangle: `e32e28touch` (own touch),
-`e32e32touch` (shared, 240×320), `e32024touch` (the ESP32-024, whose axes are
-swapped), `e32035touch` (the ESP32-035, both axes mirrored where the 32E 3.5" mirrors
+`e32e32touch` (shared, 240×320), `e32024touch` (the ST7789 ESP32-024, whose axes are
+swapped), `e32024itouch` (the ILI9341 ESP32-024, both axes mirrored), `e32035touch` (the ESP32-035, both axes mirrored where the 32E 3.5" mirrors
 only Y), `e32etouch` (shared, 320×480 — also the earlier
 `chipguy_ESP32-32E_CYD_4inch_display`'s). The names predate the `cydr_` prefix and
 were kept so saved calibrations survive the rename.
@@ -196,6 +196,16 @@ round from every other board: held presses read raw (X, Y) ≈ (946, 3372) at sc
 swaps the pair right after sampling (`_swapXY`; pressure still uses the true X
 channel), after which the mapping is the own-touch boards' — mirror X only — and
 `readRaw()`, `TouchCalibrate` and the calibration rectangle need no special case.
+
+**The ILI9341 version.** A second unit (MAC `…33:2C:04`, 2026-10-23) has an ILI9341, which
+answers its own ID read, so detection names it ESP32-024 with that panel. Its touch film
+is laid the other way from the ST7789 module's. With the swap applied, the four corners
+came out rotated a quarter turn. The chip's own readings at the corners, (X, Y), were
+TL ≈ (3470, 3620), TR ≈ (840, 3480), BL ≈ (3400, 790) and BR ≈ (700, 600). So raw X
+follows screen X and raw Y follows screen Y, both reversed: the 3.2"'s layout. The driver
+keys on the panel: no swap, mirror both, and the calibration is kept in its own namespace
+(`e32024itouch`), so one saved under the swapped layout is never applied to it. Corners
+and a drag along the top edge tracked on both units after the change.
 
 **Sound.** No GPIO switches the LTK8002D: a 500 Hz tone on DAC GPIO26 was heard
 whether GPIO4 was floating, LOW or HIGH, and during the LOW phase the red LED lit. A
@@ -687,9 +697,30 @@ start-up — the player reads the 10-byte ID3v2 header and seeks past the tag in
 
 ## Card slot
 
-The pin assignment holds on all five boards — `MP3Player` mounts the card with
-`SD.begin(5, SPI, …)` on the default VSPI pins on each of them — but the pull-ups and
-the header below were read from the 2.8"'s schematic only.
+The pin assignment holds on all six boards — `MP3Player` mounts the card with
+`SD.begin(5, SPI, …)` on the default VSPI pins on each of them — but the header below
+was read from the 2.8"'s schematic only. The pull-ups were also checked on the bench.
+
+**How the pull-ups were probed** (2026-10-23, card removed, one unit each of the 32E 2.8"
+ILI9341 and ST7789, 3.2", ESP32-035, and two each of the 3.5" / 4.0" and the ESP32-024;
+the 2432S028 wasn't attached).
+For each of GPIO5 / 18 / 19 / 23, a scratch sketch read the pin with only the internal
+pull-down (~45 kΩ), then with only the internal pull-up. Then, with no internal pulls, it
+drove the pin low (or high), released it with interrupts off, and polled `GPIO_IN_REG`
+against the cycle counter until the level changed, 10 ms timeout, median of five.
+Every board gave the same result:
+
+| Pin | vs internal pull-down | Rise after release | Fall after release | Reading |
+|---|---|---|---|---|
+| GPIO5 CS | HIGH | 270 ns | > 10 ms | pull-up, well under 45 kΩ |
+| GPIO19 MISO | HIGH | 270 ns | > 10 ms | pull-up |
+| GPIO23 MOSI | HIGH | 270 ns, or 383 ns on the 3.2" and both 3.5" / 4.0" | > 10 ms | pull-up |
+| GPIO18 SCK | LOW | > 10 ms | > 10 ms | no pull either way; holds its last level |
+
+270 ns is the polling loop's floor (one APB register read per pass), so the real rise is
+shorter still — consistent with the schematic's 10 kΩ into tens of pF. The 383 ns on
+MOSI is one poll step more. More trace capacitance or a somewhat weaker resistor would
+explain it; this method can't tell which.
 
 GPIO5 / 18 / 19 / 23 are the classic ESP32's **VSPI IOMUX pins**, so the card runs at
 full SPI speed without the GPIO matrix. **10 kΩ pull-ups** on CS, MOSI, MISO and the two

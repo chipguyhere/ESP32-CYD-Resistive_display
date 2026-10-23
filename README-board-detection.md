@@ -18,7 +18,7 @@ the sketch can ask for each one afterwards. Together they name the board:
 | ESP32-32E 2.8" | `CYDR_MODEL_32E_28` | own touch | ILI9341 or ST7789, 240×320 | **22** | speaker amplifier enable |
 | ESP32-32E 3.2" | `CYDR_MODEL_32E_32` | shared touch | ST7789, 240×320 | **22** | speaker amplifier enable |
 | ESP32-32E 3.5" / 4.0" | `CYDR_MODEL_32E_35_40` | shared touch | ST7796, 320×480 | **22** | speaker amplifier enable |
-| ESP32-024 2.4" | `CYDR_MODEL_024` | shared touch | ST7789, 240×320 | **4** | the red LED |
+| ESP32-024 2.4" | `CYDR_MODEL_024` | shared touch | ST7789 or ILI9341, 240×320 | **4** | the red LED |
 | ESP32-035 3.5" | `CYDR_MODEL_035` | shared touch | ST7796, 320×480 | **4** | the red LED |
 
 Three pairs of boards look alike to the first two checks: the 2432S028 and the 32E 2.8"
@@ -33,10 +33,12 @@ The **`BoardDetect`** example shows all of this on the screen, plus what each mo
 for battery support, a light sensor and an amplifier switch — that table is in
 [README-board.md](README-board.md#which-boards-these-are).
 
-The 3.2" and the ESP32-024 need different settings — the ESP32-024's screen shows inverse
+The 3.2" and the ESP32-024 need different settings — the ST7789 ESP32-024's screen shows inverse
 video with the 3.2"'s, and its touch axes are swapped — so `begin()` waits for the
 red-LED answer before it sets the screen up. The 32E 3.5" and the ESP32-035 share a
-screen setup, but the ESP32-035's touch runs the other way left-to-right.
+screen setup, but the ESP32-035's touch runs the other way left-to-right. The ESP32-024
+also comes with an ILI9341, whose touch is laid out like the 3.2"'s rather than the
+ST7789 ESP32-024's; the panel ID tells the two apart.
 
 All three LED pins were confirmed on all six boards on 2026-10-18 (2432S028, 32E 2.8",
 3.2", two 3.5"/4.0", ESP32-024): each lit the pins these calls return while its screen

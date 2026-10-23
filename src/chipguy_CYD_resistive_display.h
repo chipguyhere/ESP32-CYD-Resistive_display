@@ -21,7 +21,7 @@
  *       SHARED_TOUCH (32E 3.2", 3.5", 4.0", ESP32-024, ESP32-035): backlight GPIO27,
  *                    XPT2046 on this display's SPI bus
  *   - The PANEL (cydr_panel_t), told by its ID registers (SDO on GPIO12):
- *       ILI9341 (BGR, columns mirrored), 240x320 — 2.8"
+ *       ILI9341 (BGR, columns mirrored), 240x320 — 2.8" and 2.4"
  *       ST7789  (RGB, columns not mirrored), 240x320 — 2.8" and 2.4"
  *               (inversion off), 3.2" (inversion on)
  *       ST7796  (BGR), 320x480 — 3.5", 4.0", ESP32-035
@@ -42,7 +42,7 @@
  *   Touch (XPT2046), see chipguy_CYD_resistive_touch:
  *     own-touch:     CLK 25  MOSI 32  MISO 39  CS 33  IRQ 36
  *     shared-touch:  this display's bus (13/14/12), CS 33  IRQ 36
- *                    (the ESP32-024's XPT2046 has its X and Y swapped)
+ *                    (the ST7789 ESP32-024's XPT2046 has its X and Y swapped)
  */
 
 #pragma once
@@ -141,7 +141,7 @@ enum cydr_model_t : uint8_t {
     CYDR_MODEL_32E_32,       // shared touch, ST7789, amplifier enable on GPIO4
     CYDR_MODEL_32E_35_40,    // shared touch, ST7796, amplifier enable on GPIO4
                              //   (also the guess when GPIO4 couldn't be measured)
-    CYDR_MODEL_024,          // ESP32-024 2.4": shared touch, ST7789, red LED on GPIO4
+    CYDR_MODEL_024,          // ESP32-024 2.4": shared touch, ST7789 or ILI9341, red LED on GPIO4
     CYDR_MODEL_035,          // ESP32-035 3.5": shared touch, ST7796, red LED on GPIO4
 };
 

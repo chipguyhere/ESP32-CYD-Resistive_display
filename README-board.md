@@ -24,7 +24,7 @@ All are a classic **ESP32** (not S3) with **4 MB flash, no PSRAM**. Build for
 | **ESP32-32E 3.2"** | silkscreen *3.2" LCD Display / ESP32-32E 240x320 / Resistance Touch* | shared touch | ST7789, 240×320 |
 | **ESP32-32E 3.5"** | silkscreen *3.5" LCD Display / ESP32-32E 320x480 / Resistance Touch* | shared touch | ST7796, 320×480 |
 | **ESP32-32E 4.0"** | silkscreen *4.0" LCD Display / ESP32-32E 320x480 / Resistance Touch* | shared touch | ST7796, 320×480 |
-| **ESP32-024** | 2.4"; "ESP32-024" in the copper on the back; battery connector; three buttons (RST, BOOT, SW1) | shared touch | ST7789, 240×320 |
+| **ESP32-024** | 2.4"; "ESP32-024" in the copper on the back; battery connector; three buttons (RST, BOOT, SW1) | shared touch | ST7789 or ILI9341, 240×320 |
 | **ESP32-035** | 3.5"; "ESP32-035" in the copper on the back; light sensor; three buttons (RST, BOOT, SW1) | shared touch | ST7796, 320×480 |
 
 What else each one has, by `display.model()` (the `BoardDetect` example shows it):
@@ -74,7 +74,7 @@ Four panel setups turn up across these boards:
 
 | Panel | Size | Found on | Notes |
 |---|---|---|---|
-| ILI9341 | 240×320 | 2432S028, 32E 2.8" | BGR color order |
+| ILI9341 | 240×320 | 2432S028, 32E 2.8", ESP32-024 | BGR color order |
 | ST7789 | 240×320 | 2432S028, 32E 2.8", ESP32-024 | RGB, columns the other way; color inversion **off** |
 | ST7789 | 240×320 | 32E 3.2" | as above, but color inversion **on** |
 | ST7796 | 320×480 | 32E 3.5", 4.0", ESP32-035 | BGR |
@@ -261,8 +261,10 @@ reading.
 **ESP32-024 in short.** The 3.2"'s display and touch wiring with the 2432S028's LED and
 sound: backlight on GPIO27, touch on the display bus, red LED on GPIO4, an amplifier
 that is always on. The library tells it apart from the 3.2" by GPIO4
-([how](README-board-detection.md)), and sets its screen and touch up differently
-(inversion off, touch X and Y swapped). Its copper reads "ESP32-024"; sellers call it
+([how](README-board-detection.md)), and sets its screen and touch up differently.
+It comes with either of two screens. With the ST7789 the library turns color inversion
+off and swaps touch X and Y. With the ILI9341 (one unit, 2026-10-23) touch is laid out
+as on the 3.2", with both axes reversed and no swap. Its copper reads "ESP32-024"; sellers call it
 ESP32-2432S024. It replaces the older `chipguy_cyd2432S024_display` library. Its
 **CN1** header is an I²C port on IO21 / IO22 with 3.3V, so an I²C sensor plugs straight in;
 nothing answered with the header empty. The panel's reset is tied to the ESP32's, so

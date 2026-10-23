@@ -14,7 +14,8 @@
 #define CYDR_TOUCH_NVS_NS_OWN        "e32e28touch"   // own-touch, 240x320 (2432S028, 32E 2.8")
 #define CYDR_TOUCH_NVS_NS_SHARED_480 "e32etouch"     // shared-touch, 320x480 (3.5", 4.0")
 #define CYDR_TOUCH_NVS_NS_SHARED_320 "e32e32touch"   // shared-touch, 240x320 (3.2")
-#define CYDR_TOUCH_NVS_NS_024        "e32024touch"   // shared-touch, 240x320, X/Y swapped (ESP32-024)
+#define CYDR_TOUCH_NVS_NS_024        "e32024touch"   // shared-touch, 240x320, X/Y swapped (ESP32-024, ST7789)
+#define CYDR_TOUCH_NVS_NS_024_ILI    "e32024itouch"  // shared-touch, 240x320, both axes mirrored (ESP32-024, ILI9341)
 #define CYDR_TOUCH_NVS_NS_035        "e32035touch"   // shared-touch, 320x480, both axes mirrored (ESP32-035)
 #define CYDR_TOUCH_NVS_XMIN "xmin"
 #define CYDR_TOUCH_NVS_XMAX "xmax"
@@ -103,8 +104,17 @@ bool chipguy_CYD_resistive_touch::_setup(cydr_board_t board, cydr_panel_t panel)
             // (Measured on hardware for chipguy_ESP32-32E_CYD_4inch_display.)
             _mirrorX = false; _mirrorY = true;
             _nvsNs = CYDR_TOUCH_NVS_NS_SHARED_480;
+        } else if (cydr_activeModel() == CYDR_MODEL_024 && panel == CYDR_PANEL_ILI9341) {
+            // ESP32-024 with the ILI9341 panel: its touch film is laid the
+            // other way from the ST7789 module's -- no swap, and both raw axes
+            // run opposite the panel's, as on the 3.2" (bench, 2026-10-23).
+            // Its own namespace, so a calibration saved under the swapped
+            // layout is never applied to this one.
+            _nativeW = 240; _nativeH = 320;
+            _mirrorX = true; _mirrorY = true;
+            _nvsNs = CYDR_TOUCH_NVS_NS_024_ILI;
         } else if (cydr_activeModel() == CYDR_MODEL_024) {
-            // ESP32-024: the XPT2046's X and Y run along the panel's rows and
+            // ESP32-024 (ST7789 panel): the XPT2046's X and Y run along the panel's rows and
             // columns, so the raw pair is swapped in _readRawSample().  After
             // the swap raw X runs opposite the panel's X and raw Y matches,
             // as on the own-touch boards (bench, 2026-10-18).
