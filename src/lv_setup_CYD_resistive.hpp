@@ -62,6 +62,7 @@ public:
         lv_init();
 
         static lv_display_t *disp = lv_display_create(display.width(), display.height());
+        _disp = disp;
         lv_display_set_flush_cb(disp, _disp_flush);
         lv_display_set_user_data(disp, this);
         // Force RGB565 so our flush byte-swap (2 bytes/pixel) is always correct,
@@ -95,6 +96,28 @@ public:
         lv_tick_set_cb(_tick_get);
     }
 
+    // Change the rotation after begin(): display, touch and LVGL together.
+    // Same values as begin() (0..3, or degrees 0/90/180/270); each step turns
+    // the picture a quarter-turn clockwise.  Call from the thread that runs
+    // lv_timer_handler() (normally loop()), not from an LVGL event callback
+    // in the middle of rendering.  LVGL redraws the whole screen at the new
+    // size: flex / grid layouts, LV_PCT() sizes and lv_obj_align() reflow by
+    // themselves; objects placed at fixed coordinates stay where they were
+    // and may need moving.  The render buffers are kept: LVGL fits fewer,
+    // longer rows into them in landscape.
+    void setRotation(uint16_t rotation) {
+        display.waitFlush();               // MADCTL must not change under a DMA
+        display.setRotation(rotation);
+        _touch.setRotation(rotation);
+        if (_disp) {
+            lv_display_set_resolution(_disp, display.width(), display.height());
+            lv_obj_invalidate(lv_display_get_screen_active(_disp));
+        }
+    }
+
+    // The current rotation, 0..3.
+    uint8_t rotation() const { return display.rotation(); }
+
     // Access the touch driver to tune calibration, e.g. from setup():
     //   lv_setup.touch().setCalibration(xMin, xMax, yMin, yMax);
     chipguy_CYD_resistive_touch &touch() { return _touch; }
@@ -108,6 +131,7 @@ public:
     size_t drawBufferBytes() const { return _bufBytes; }
 
 private:
+    lv_display_t *_disp = nullptr;
     uint16_t *_buf[2] = {nullptr, nullptr};
     size_t _bufBytes = 0;
     chipguy_CYD_resistive_touch _touch;

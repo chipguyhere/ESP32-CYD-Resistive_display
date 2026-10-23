@@ -269,7 +269,7 @@ static float runCalibration(int cols, int rows,
     linfit(gy, rawYs, n, ay, by);   // rawY = ay + by*Sy (Y axis)
 
     // read() mirrors raw axes depending on the board (own-touch boards and the
-    // ESP32-024 mirror X, the 3.2" both, the 3.5"/4.0" Y; the ESP32-024's
+    // ESP32-024 mirror X, the 3.2" and ESP32-035 both, the 3.5"/4.0" Y; the ESP32-024's
     // readRaw() has already swapped its X and Y).  On a mirrored axis the max raw value is at
     // the screen's low edge (S=0) and the min at the high edge.
     const bool mx = touch.mirrorsX(), my = touch.mirrorsY();

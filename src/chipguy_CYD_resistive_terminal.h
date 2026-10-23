@@ -347,8 +347,9 @@ static constexpr uint16_t CYDR_ORANGE  = cydr_rgb565(255, 165, 0);
 
 enum cydr_cursor_t : uint8_t {
     CYDR_CURSOR_OFF = 0,
-    CYDR_CURSOR_BLOCK,       // the whole cell, colors swapped
+    CYDR_CURSOR_BLOCK,       // the whole cell, solid in the text color
     CYDR_CURSOR_UNDERLINE,   // a bar along the bottom of the cell
+    CYDR_CURSOR_BAR,         // a thin vertical line at the cell's left edge (a caret)
 };
 
 // What a scroll step does about the rows it rewrites.  See setScrollMode().
@@ -430,11 +431,15 @@ public:
     uint16_t textColor() const { return _fg; }
     uint16_t backgroundColor() const { return _bg; }
 
-    // Blinking cursor: off, block or underline.  The task blinks it.  It shows
-    // on cells whose contents the terminal knows -- the current line after it
-    // was printed on or cleared -- and hides over text left on screen by
-    // earlier lines it no longer holds.
+    // Blinking cursor: off, block, underline or bar.  The task blinks it, in
+    // the current text color, alternating with what the cell shows.  Over
+    // text the terminal no longer holds (earlier lines, after setCursor()),
+    // the task reads the covered pixels back from the panel first, to put
+    // them back; on a panel that can't be read back the cursor hides there.
     void setCursorStyle(cydr_cursor_t style);
+
+    // Whether the panel passed the start-up readback check (see above).
+    bool readbackAvailable() const { return _rbOK; }
 
     // What filling the last cell of a line does.  false (the default): the
     // cursor waits just past the right edge, and moves to the next line only
@@ -551,6 +556,9 @@ private:
     int16_t _W = 0, _H = 0, _cols = 0;
     uint8_t _CH = 32;
     bool _rot2 = false;
+    bool _rbOK = false;                 // the panel reads back
+    uint8_t _rbBpp = 3;                 // bytes per pixel it reads back in
+    uint32_t _wrHz = 0;                 // the device's own (write) clock
 
     // ── Shared state, guarded by _mux ─────────────────────────────────────
     // Positions in the scrolling area are "virtual" pixel rows: an ever-
@@ -600,6 +608,15 @@ private:
     uint16_t _blankColor = 0;
     bool _blankValid = false;
     volatile uint32_t _scrolled = 0;
+    // The cursor over a cell the terminal doesn't hold: the pixels it covers
+    // are read back into the start of _dma and written back to take it off.
+    // A cell on the frame-memory wrap point is two rects: rows _ghY[0] ..
+    // at the bottom of the scroll area, then _ghY[1] .. at its top.
+    bool _ghSaved = false;              // _dma holds the rects' pixels
+    bool _ghShown = false;              // the cursor is on the panel there
+    int16_t _ghX = 0, _ghW = 0;
+    int16_t _ghY[2] = {}, _ghH[2] = {}; // panel rows; _ghH[1] == 0: one rect
+    uint16_t _ghColor = 0;
 
     // caller side
     void _feedByte(uint8_t b);
@@ -631,6 +648,12 @@ private:
     bool _renderPending();
     bool _trySwitch();
     bool _scrollStep();
+    bool _ghostUpdate();
+    void _ghostLift();
+    bool _readbackCheck();
+    void _ghostWrite();
+    void _readRect(int x, int y, int w, int h, uint16_t *out);
+    void _fillRect(int x, int y, int w, int h, uint16_t color, uint16_t *spare);
     void _renderRuns(uint32_t bits, uint32_t gen, int32_t top, int py0, int py1, bool pickup);
     void _renderRect(int c0, int c1, uint32_t gen, int32_t top, int py0, int py1, bool pickup);
     int  _renderRow(int c0, int c1, int py, uint16_t *out);
@@ -641,7 +664,7 @@ private:
     void _busBegin();
     void _busEnd();
     void _cmd(uint8_t cmd, const uint8_t *data, int n);
-    void _window(int x0, int x1, int y0, int y1);
+    void _window(int x0, int x1, int y0, int y1, bool read = false);
     void _queue(const uint16_t *buf, int bytes);
     void _waitDma();
     void _sendScrollDef(int16_t T, int16_t VSA, int16_t B);

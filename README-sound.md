@@ -101,6 +101,12 @@ DAC output from scratch, and read `player.cpp` for the task structure.
    that always accepts decodes the whole file inside one `loop()` and the task never
    services its queue again (the symptom: audio plays, nothing else responds). Return
    `false` once per chunk written; the decoder re-offers the refused sample next call.
+   Then **sleep one tick after every `loop()`** — the blocking write only sleeps the task
+   while decoding keeps up, and a file that decodes slower than real time would
+   otherwise trip the task watchdog. Register a status callback that also sleeps a tick
+   (a damaged file makes `loop()` retry inside one call), and seek past an ID3v2 tag
+   before `mp3->begin()` rather than using `AudioFileSourceID3`.
+   [Why](README-engineering.md#the-gpio25-conflict).
 7. **Full-scale samples are fine on USB.** No audible clipping at ±127 on real music.
    Volume is software scaling before the 8-bit quantizer; mix stereo to mono. On
    battery, see [limits](#limits-that-keep-it-clean).

@@ -6,6 +6,7 @@
  *   - ESP32-32E 3.2"          3.2"  240x320
  *   - ESP32-32E 3.5" / 4.0"   320x480
  *   - ESP32-024               2.4"  240x320  (battery connector, FM5324GA)
+ *   - ESP32-035               3.5"  320x480  (battery connector, light sensor)
  * The ESP32-32E boards are generic, sold by several vendors; their silkscreen
  * is three lines, e.g. "2.8" LCD Display / ESP32-32E 240x320 / Resistance
  * Touch" -- "3.2" ... 240x320", "3.5" ... 320x480", "4.0" ... 320x480" on
@@ -17,13 +18,13 @@
  *     pull-down:
  *       OWN_TOUCH    (2432S028, 32E 2.8"): backlight GPIO21, XPT2046 on its
  *                    own pins
- *       SHARED_TOUCH (32E 3.2", 3.5", 4.0", ESP32-024): backlight GPIO27,
+ *       SHARED_TOUCH (32E 3.2", 3.5", 4.0", ESP32-024, ESP32-035): backlight GPIO27,
  *                    XPT2046 on this display's SPI bus
  *   - The PANEL (cydr_panel_t), told by its ID registers (SDO on GPIO12):
  *       ILI9341 (BGR, columns mirrored), 240x320 — 2.8"
  *       ST7789  (RGB, columns not mirrored), 240x320 — 2.8" and 2.4"
  *               (inversion off), 3.2" (inversion on)
- *       ST7796  (BGR), 320x480 — 3.5", 4.0"
+ *       ST7796  (BGR), 320x480 — 3.5", 4.0", ESP32-035
  *     The panel alone decides the geometry.  See _detectPanel(); setPanel()
  *     overrides it.
  *   The red LED pin (GPIO4 or 22, by GPIO4's voltage) then tells the boards
@@ -110,7 +111,7 @@ enum cydr_panel_t : uint8_t {
     CYDR_PANEL_AUTO = 0,
     CYDR_PANEL_ILI9341,      // 240x320 (2.8")
     CYDR_PANEL_ST7789,       // 240x320 (2.8", 3.2")
-    CYDR_PANEL_ST7796,       // 320x480 (3.5", 4.0")
+    CYDR_PANEL_ST7796,       // 320x480 (3.5", 4.0", ESP32-035)
 };
 
 // How the board is wired, which decides the backlight pin and the touch bus.
@@ -121,7 +122,7 @@ enum cydr_board_t : uint8_t {
     CYDR_BOARD_OWN_TOUCH,    // backlight 21, XPT2046 on its own pins:
                                //   ESP32-2432S028, ESP32-32E 2.8"
     CYDR_BOARD_SHARED_TOUCH, // backlight 27, XPT2046 on the display bus:
-                               //   ESP32-32E 3.2", 3.5", 4.0", ESP32-024
+                               //   ESP32-32E 3.2", 3.5", 4.0", ESP32-024, ESP32-035
 };
 
 // The board as told by the backlight pins' pull-downs, without driving
@@ -138,8 +139,10 @@ enum cydr_model_t : uint8_t {
     CYDR_MODEL_2432S028,     // own touch, red LED on GPIO4
     CYDR_MODEL_32E_28,       // own touch, amplifier enable on GPIO4
     CYDR_MODEL_32E_32,       // shared touch, ST7789, amplifier enable on GPIO4
-    CYDR_MODEL_32E_35_40,    // shared touch, ST7796
+    CYDR_MODEL_32E_35_40,    // shared touch, ST7796, amplifier enable on GPIO4
+                             //   (also the guess when GPIO4 couldn't be measured)
     CYDR_MODEL_024,          // ESP32-024 2.4": shared touch, ST7789, red LED on GPIO4
+    CYDR_MODEL_035,          // ESP32-035 3.5": shared touch, ST7796, red LED on GPIO4
 };
 
 // The board and panel found by the most recent display begin() (UNKNOWN /
@@ -164,7 +167,8 @@ int8_t cydr_redLedPin();
 uint32_t cydr_redLedProbeMillivolts();
 
 // The RGB LED's green and blue pins (active LOW): 16 and 17 on every board
-// except the ESP32-024, where they are the other way round (17 and 16).
+// except the ESP32-024 and ESP32-035, where they are the other way round
+// (17 and 16).
 // Valid after display.begin(), since they follow from the model.  -1 before
 // that, or when the model is unknown and the board could be either a 32E 3.2"
 // or an ESP32-024 (shared-touch 240x320 with no GPIO4 reading).

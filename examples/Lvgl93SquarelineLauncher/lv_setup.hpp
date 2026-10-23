@@ -40,6 +40,11 @@
  *       //           Degrees (0/90/180/270) work as aliases for 0/1/2/3.
  *       void begin(uint16_t rotation = 0);
  *
+ *       // Change the rotation later (display, touch and LVGL together);
+ *       // each step turns the picture a quarter-turn clockwise.
+ *       void setRotation(uint16_t rotation);
+ *       uint8_t rotation() const;
+ *
  *       // The touch driver, e.g. to apply calibration from setup():
  *       //   lv_setup.touch().setCalibration(xMin, xMax, yMin, yMax);
  *       chipguy_CYD_resistive_touch &touch();

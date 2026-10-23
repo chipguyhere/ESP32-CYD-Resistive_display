@@ -148,11 +148,11 @@ int8_t cydr_redLedPin() {
 
 uint32_t cydr_redLedProbeMillivolts() { return _cydr_redLedMv; }
 
-// Green / blue: 16 / 17 everywhere but the ESP32-024 (17 / 16; seen against the
-// screen on all six boards, 2026-10-18).  An unknown model is still answerable
+// Green / blue: 16 / 17 everywhere but the ESP32-024 and ESP32-035 (17 / 16;
+// seen against the screen on all six boards, 2026-10-18; the -035 2026-10-23).  An unknown model is still answerable
 // on own-touch wiring, where both candidates (2432S028, 32E 2.8") use 16 / 17.
 static bool _cydr_gbKnown(bool &swapped) {
-    swapped = _cydr_activeModel == CYDR_MODEL_024;
+    swapped = _cydr_activeModel == CYDR_MODEL_024 || _cydr_activeModel == CYDR_MODEL_035;
     if (_cydr_activeModel != CYDR_MODEL_UNKNOWN) return true;
     return _cydr_activeBoard == CYDR_BOARD_OWN_TOUCH;
 }
@@ -307,15 +307,17 @@ const char *chipguy_CYD_resistive_display::modelName() const {
         case CYDR_MODEL_32E_32:    return "ESP32-32E 3.2\"";
         case CYDR_MODEL_32E_35_40: return "ESP32-32E 3.5\"/4.0\"";
         case CYDR_MODEL_024:       return "ESP32-024 2.4\"";
+        case CYDR_MODEL_035:       return "ESP32-035 3.5\"";
         default:                   return "unknown";
     }
 }
 
 // The wiring, panel and red LED pin together name the board.  -1 (no GPIO4
-// reading) leaves the 240x320 boards unknown.
+// reading) leaves the 240x320 boards unknown; a 320x480 one is taken for the
+// 32E 3.5"/4.0", as before the ESP32-035 was known.
 static cydr_model_t _cydr_modelFrom(cydr_board_t board, cydr_panel_t panel, int8_t redLed) {
     if (board == CYDR_BOARD_SHARED_TOUCH && panel == CYDR_PANEL_ST7796)
-        return CYDR_MODEL_32E_35_40;
+        return redLed == 4 ? CYDR_MODEL_035 : CYDR_MODEL_32E_35_40;
     if (redLed < 0) return CYDR_MODEL_UNKNOWN;
     if (board == CYDR_BOARD_SHARED_TOUCH)
         return redLed == 4 ? CYDR_MODEL_024 : CYDR_MODEL_32E_32;

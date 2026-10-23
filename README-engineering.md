@@ -13,7 +13,7 @@ The power, sound and card-slot sections are the **ESP32-32E 2.8"**'s, the board 
 schematic was read. The other boards appear where the bench has said something about
 them: [board wiring](#two-wirings-and-how-begin-tells-them-apart), the
 [3.2" panel](#the-32-panel), [GPIO4](#telling-gpio4s-two-jobs-apart), and the
-[ESP32-024](#the-esp32-024).
+[ESP32-024](#the-esp32-024), and the ESP32-035's [light sensor](#light-sensor).
 
 **Sources.** This board's schematic as read for these notes; part datasheets (TP4054,
 ME6217, SL2305 / SI2305, B5819W, SC8002B / LM4871, CH340C, XPT2046, ILI9341, ST7789); the ESP32
@@ -66,6 +66,7 @@ re-measured on the 2432S028, 3.2" and 4.0" through the library's own probe — 1
 | ESP32-32E 2.8" / 3.2" / 3.5" / 4.0" (amplifier shutdown) | 3.14 V | 2.50 V | 3.14 V |
 | ESP32-2432S028 (red LED) | 3.14 V | 1.63 V | 2.47 V |
 | ESP32-024 (red LED; 2026-10-18) | 3.12 V | 1.60 V | 2.13 V |
+| ESP32-035 (red LED; 2026-10-23) | 3.16 V | 1.58 V | — |
 | ESP32-2432S032C (red LED; capacitive, not supported) | — | 1.62 V | — |
 
 Both boards pull GPIO4 *up*; what differs is the element doing it.
@@ -111,10 +112,10 @@ DC 2, SDO 12). What differs is the backlight pin and where the XPT2046 sits:
 
 | | Own touch | Shared touch |
 |---|---|---|
-| Boards | 2432S028, 32E 2.8" | 32E 3.2", 3.5", 4.0", ESP32-024 |
+| Boards | 2432S028, 32E 2.8" | 32E 3.2", 3.5", 4.0", ESP32-024, ESP32-035 |
 | Backlight | GPIO21, external pull-down | GPIO27, external pull-down |
 | XPT2046 | CLK 25, MOSI 32, MISO 39, CS 33, IRQ 36 — bit-banged | on HSPI (13 / 14 / 12), CS 33, IRQ 36 — second SPI device at 2 MHz |
-| The other backlight pin | GPIO27: floats (32E 2.8", header CS) or 10 kΩ pull-up (2432S028) | GPIO21: floats (3.2") or pulled up (ESP32-024) |
+| The other backlight pin | GPIO27: floats (32E 2.8", header CS) or 10 kΩ pull-up (2432S028) | GPIO21: floats (3.2", 3.5") or pulled up (ESP32-024, ESP32-035) |
 
 `cydr_detectBoardPassive()` enables the internal pull-up on GPIO21 and GPIO27 in turn;
 the backlight driver's pull-down overpowers it and the pin reads 0.13 V. Exactly one
@@ -133,7 +134,8 @@ GPIO34 at 2.10 V on USB, as on the 32E 2.8" with no cell.
 The touch calibration lives in one NVS namespace per wiring + panel size, so a sketch
 moved between boards doesn't carry the wrong rectangle: `e32e28touch` (own touch),
 `e32e32touch` (shared, 240×320), `e32024touch` (the ESP32-024, whose axes are
-swapped), `e32etouch` (shared, 320×480 — also the earlier
+swapped), `e32035touch` (the ESP32-035, both axes mirrored where the 32E 3.5" mirrors
+only Y), `e32etouch` (shared, 320×480 — also the earlier
 `chipguy_ESP32-32E_CYD_4inch_display`'s). The names predate the `cydr_` prefix and
 were kept so saved calibrations survive the rename.
 
@@ -242,7 +244,7 @@ GPIO0. That agrees with the schematic.
 
 ### Light sensor
 
-The 2432S028 and the ESP32-024 have a photoresistor on GPIO34. On the ESP32-024's
+The 2432S028, the ESP32-024 and the ESP32-035 have a photoresistor on GPIO34. On the ESP32-024's
 schematic it is R21 (GT36516) from GPIO34 to ground, in parallel with the lower half of
 a 1 MΩ / 1 MΩ divider from 3.3 V (R15, R19). In light the photoresistor is tens of
 kΩ or less and pulls the pin to within millivolts of ground; only when its resistance
@@ -258,6 +260,14 @@ effectively open; 643 mV puts the ESP32-024's at about 0.3 MΩ in the same darkn
 makes the sensor a darkness detector: a useful daylight range would need a top
 resistor of a few kΩ. 11 dB is the right attenuation — it is the only one that spans
 the 2432S028's dark reading.
+
+The ESP32-035 (no schematic in hand; 2026-10-23, one unit) reads like the 2432S028:
+the 142 mV floor in room light and **1.67 V** in a closed box with the backlight and LED
+off, so its photoresistor goes effectively open in the dark and the divider is
+presumably the same 1 MΩ / 1 MΩ. With the backlight lit, the same box gave only
+**≈ 205 mV**: the sensor picks up enough of the board's own light to sit at about
+70 kΩ (by the formula above), below BoardDetect's 300 mV threshold. Taking it out of
+the box dropped the reading to the floor within about 3 s.
 
 ### USB-C CC wiring
 
@@ -660,6 +670,19 @@ One more decoder quirk: `AudioGeneratorMP3::loop()` only returns when the output
 file inside one call and starves the task — return `false` once per chunk written; the
 decoder re-offers the refused sample next call.
 
+That refusal makes each `loop()` call short, but doesn't by itself let `IDLE0` run on
+core 0: the task's only sleep is the blocking DMA write, and it blocks only while
+decoding stays ahead of playback. A file that decodes slower than real time (a dense
+320 kbps passage) never fills the queue, so the task would spin `loop()` → refuse →
+`loop()` until the task watchdog fires. `MP3Player` sleeps one tick after every
+`loop()` — 1 ms per chunk against a 12-chunk queue. Two more holes, found on the Loftie
+(2026-10-16): `loop()` retries an undecodable frame inside the same call, so a damaged
+file can hold the CPU for seconds — a status callback (`RegisterStatusCB`) that sleeps a
+tick paces it and logs the first 20 errors per track; and `AudioFileSourceID3` reads the
+tag a byte at a time inside the first `loop()`, so a tag with large album art stalls
+start-up — the player reads the 10-byte ID3v2 header and seeks past the tag instead
+(title and artist come from `id3scan`).
+
 ---
 
 ## Card slot
@@ -837,6 +860,48 @@ so the **cursor's line** keeps its screen position — `off′ = (memoryRow − 
 the old wrap point, or now sit under a frozen strip, show whatever their memory rows
 hold. The cursor is moved into the new area if needed, and its line's cells become
 "unknown" unless they kept their place.
+
+### Readback
+
+The cursor over a cell the terminal doesn't hold (`CELL_KEEP`, after `setCursor()` to
+an earlier line) is drawn by reading the covered rect back with RAMRD (0x2E), keeping
+it in the start of the DMA buffer, and writing it back for the off phase. The block
+covers 16 × 32 (1 KB as RGB565), the underline 16 × 3, the bar 2 × 32. A cell on a
+line that straddles the frame-memory wrap point (frozen areas that leave a scroll area
+that isn't a whole number of lines) is two rects, the rows above the wrap at the
+bottom of the scroll area and the rest at its top: two reads, two fills, two writes,
+saved back to back. The buffer is
+`2 × CYDR_TERM_MAX_WIDTH` pixels (1,280 B) whatever the panel width, so the saved cell
+and the raw read-in space fit on every board. Any step that draws first writes the
+pixels back and waits for that DMA (`_ghostLift`); the cursor is read and drawn again
+once the task is idle.
+
+A probe on all six boards (2026-10-19, both rotations, three 3,072-pixel trials per
+clock):
+
+| Controller | Read format | Clean | Not clean |
+|---|---|---|---|
+| ILI9341 (2432S028) | dummy byte, then 3 B/px RGB666 | 1–26.7 MHz | 40 MHz (errors, 1-bit shift) |
+| ST7789 (32E 2.8", 32E 3.2", 024) | dummy byte, then 3 B/px RGB666 | 1–5 MHz | 8–16 MHz varies by board and run; 20–26.7 MHz clean but 9 bits late; 40 MHz none |
+| ST7796 (32E 3.5"/4.0" ×2) | dummy byte, then 2 B/px RGB565 | 1–16 MHz | 20–26.7 MHz none; 40 MHz clean but 1 bit late |
+
+The shifting offsets are the ESP32's input sampling phase against each panel's output
+delay, so the fast settings aren't something to rely on. The terminal reads at 2 MHz
+on all three: a whole cell in about 6 ms (3 B/px) or 4 ms (ST7796), on an idle screen
+where nothing waits on it. The clock is changed per transaction with
+`override_freq_hz` on the display's own device; the RAMRD command and the data phase
+share one CS assertion (`SPI_TRANS_CS_KEEP_ACTIVE`, bus held); a NOP sent with the
+write clock restores it. Rows are read a few at a time and packed down to RGB565 in
+place, the output trailing the input.
+
+**MADCTL BGR is output-only.** On all three controllers a faint red (0x1000) written
+with BGR set or clear reads back as 0x1000, and flipping the bit doesn't change what
+an earlier pixel reads back as. The bit swaps channels between frame memory and the
+glass, so readback can't tell an RGB glass from a BGR one; only the eye can.
+
+At `begin()`, before the first clear, the terminal writes four faint pixels (red,
+green, blue, a mix), reads them back, and turns readback on only on an exact match
+(`readbackAvailable()`).
 
 ### Resources
 

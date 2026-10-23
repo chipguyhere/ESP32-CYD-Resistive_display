@@ -15,6 +15,7 @@
 #define CYDR_TOUCH_NVS_NS_SHARED_480 "e32etouch"     // shared-touch, 320x480 (3.5", 4.0")
 #define CYDR_TOUCH_NVS_NS_SHARED_320 "e32e32touch"   // shared-touch, 240x320 (3.2")
 #define CYDR_TOUCH_NVS_NS_024        "e32024touch"   // shared-touch, 240x320, X/Y swapped (ESP32-024)
+#define CYDR_TOUCH_NVS_NS_035        "e32035touch"   // shared-touch, 320x480, both axes mirrored (ESP32-035)
 #define CYDR_TOUCH_NVS_XMIN "xmin"
 #define CYDR_TOUCH_NVS_XMAX "xmax"
 #define CYDR_TOUCH_NVS_YMIN "ymin"
@@ -90,7 +91,13 @@ bool chipguy_CYD_resistive_touch::_setup(cydr_board_t board, cydr_panel_t panel)
     _swapXY = false;
 
     if (_board == CYDR_BOARD_SHARED_TOUCH) {
-        if (panel == CYDR_PANEL_ST7796) {
+        if (panel == CYDR_PANEL_ST7796 && cydr_activeModel() == CYDR_MODEL_035) {
+            // ESP32-035: raw X runs opposite the panel's columns too, unlike
+            // the 32E 3.5"/4.0" (bench, 2026-10-23).
+            _nativeW = 320; _nativeH = 480;
+            _mirrorX = true; _mirrorY = true;
+            _nvsNs = CYDR_TOUCH_NVS_NS_035;
+        } else if (panel == CYDR_PANEL_ST7796) {
             _nativeW = 320; _nativeH = 480;
             // On this panel raw Y runs opposite the ST7796's rows; raw X matches.
             // (Measured on hardware for chipguy_ESP32-32E_CYD_4inch_display.)

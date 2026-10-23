@@ -9,7 +9,7 @@ the sketch can ask for each one afterwards. Together they name the board:
 | How is the board wired? | `display.board()` | `CYDR_BOARD_OWN_TOUCH` or `CYDR_BOARD_SHARED_TOUCH` |
 | Which screen chip, what size? | `display.panel()`, `display.panelName()`, `display.nativeWidth()` / `nativeHeight()` | ILI9341 / ST7789 (240×320) or ST7796 (320×480) |
 | Which pin is the red LED on? | `display.redLedPin()` (or `cydr_redLedPin()`) | `4` or `22` |
-| …and green and blue? | `display.greenLedPin()`, `display.blueLedPin()` (or `cydr_greenLedPin()`, `cydr_blueLedPin()`) | `16` / `17`, or `17` / `16` on the ESP32-024 |
+| …and green and blue? | `display.greenLedPin()`, `display.blueLedPin()` (or `cydr_greenLedPin()`, `cydr_blueLedPin()`) | `16` / `17`, or `17` / `16` on the ESP32-024 and ESP32-035 |
 | So which board is it? | `display.model()`, `display.modelName()` (or `cydr_activeModel()`) | one of the rows below |
 
 | Board | `model()` | Wiring | Panel | Red LED | GPIO4 is |
@@ -19,13 +19,15 @@ the sketch can ask for each one afterwards. Together they name the board:
 | ESP32-32E 3.2" | `CYDR_MODEL_32E_32` | shared touch | ST7789, 240×320 | **22** | speaker amplifier enable |
 | ESP32-32E 3.5" / 4.0" | `CYDR_MODEL_32E_35_40` | shared touch | ST7796, 320×480 | **22** | speaker amplifier enable |
 | ESP32-024 2.4" | `CYDR_MODEL_024` | shared touch | ST7789, 240×320 | **4** | the red LED |
+| ESP32-035 3.5" | `CYDR_MODEL_035` | shared touch | ST7796, 320×480 | **4** | the red LED |
 
-Two pairs of boards look alike to the first two checks: the 2432S028 and the 32E 2.8"
-(same wiring and panels), and the 32E 3.2" and the ESP32-024 (same wiring, same
-panel). The red-LED check splits both pairs, so every board in the table gets its own
-answer. The 3.5" and 4.0" are built alike and can't be told apart; neither needs to be.
-`model()` is `CYDR_MODEL_UNKNOWN` only when GPIO4 couldn't be measured (WiFi was
-already on) on a 240×320 board.
+Three pairs of boards look alike to the first two checks: the 2432S028 and the 32E 2.8"
+(same wiring and panels), the 32E 3.2" and the ESP32-024, and the 32E 3.5" / 4.0" and
+the ESP32-035 (same wiring, same panel). The red-LED check splits all three, so every
+board in the table gets its own answer. The 3.5" and 4.0" are built alike and can't be
+told apart; neither needs to be. `model()` is `CYDR_MODEL_UNKNOWN` only when GPIO4
+couldn't be measured (WiFi was already on) on a 240×320 board; a 320×480 board is then
+taken for a 32E 3.5" / 4.0".
 
 The **`BoardDetect`** example shows all of this on the screen, plus what each model has
 for battery support, a light sensor and an amplifier switch — that table is in
@@ -33,11 +35,13 @@ for battery support, a light sensor and an amplifier switch — that table is in
 
 The 3.2" and the ESP32-024 need different settings — the ESP32-024's screen shows inverse
 video with the 3.2"'s, and its touch axes are swapped — so `begin()` waits for the
-red-LED answer before it sets the screen up.
+red-LED answer before it sets the screen up. The 32E 3.5" and the ESP32-035 share a
+screen setup, but the ESP32-035's touch runs the other way left-to-right.
 
 All three LED pins were confirmed on all six boards on 2026-10-18 (2432S028, 32E 2.8",
 3.2", two 3.5"/4.0", ESP32-024): each lit the pins these calls return while its screen
-showed the matching color, and every LED matched.
+showed the matching color, and every LED matched. The ESP32-035's were confirmed the
+same way on 2026-10-23.
 
 ## Wiring: own touch or shared touch
 
@@ -63,7 +67,7 @@ recognised, the library prints the bytes on Serial and guesses from the wiring
 
 ## Red LED: GPIO4's voltage
 
-On the 2432S028 and the ESP32-024 GPIO4 is the red LED; on every ESP32-32E board it is
+On the 2432S028, the ESP32-024 and the ESP32-035 GPIO4 is the red LED; on every ESP32-32E board it is
 the speaker amplifier's enable and the red LED is on GPIO22. The library turns on
 GPIO4's internal pull-down and reads the pin's **voltage**, on every board:
 
@@ -75,6 +79,7 @@ GPIO4's internal pull-down and reads the pin's **voltage**, on every board:
 | ESP32-32E 3.5" | **2.49 V** | 2493–2495 mV, 2026-10-13 |
 | ESP32-32E 4.0" | **2.51 V** | 2506–2521 mV, 2026-10-13 |
 | ESP32-024 2.4" | **1.60 V** | 1601–1608 mV, 2026-10-18 |
+| ESP32-035 3.5" | **1.58 V** | 1582–1584 mV, 2026-10-23 (the 32E 3.5" beside it: 2545 mV) |
 
 Below 2.0 V means the red LED is on GPIO4. One unit of each was measured.
 [Why the two voltages differ](README-engineering.md#telling-gpio4s-two-jobs-apart).
@@ -85,8 +90,8 @@ void setup() {
     int led = display.redLedPin();          // 4 or 22, active LOW on both
     pinMode(led, OUTPUT);
     digitalWrite(led, HIGH);                // off
-    int green = display.greenLedPin();      // 16, or 17 on the ESP32-024
-    int blue  = display.blueLedPin();       // 17, or 16 on the ESP32-024
+    int green = display.greenLedPin();      // 16, or 17 on the ESP32-024 / -035
+    int blue  = display.blueLedPin();       // 17, or 16 on the ESP32-024 / -035
     bool hasAmpSwitch = led != 4;           // GPIO4 is the amplifier enable on the 32E boards
     Serial.println(display.modelName());    // e.g. "ESP32-024 2.4\""
     // ...only now start WiFi
@@ -102,11 +107,13 @@ Rules:
 - **Don't drive GPIO4 before `begin()`.** The reading is of what the board does to the
   pin; a sketch that has already made it an output gets a meaningless answer.
 - **It leaves GPIO4 as it found it** — an input with no pull — and gives the ADC back.
-  On the 32E boards the board's own pull-up keeps the amplifier off; on the 2432S028
-  and the ESP32-024 the LED stays dark.
+  On the 32E boards the board's own pull-up keeps the amplifier off; on the 2432S028,
+  the ESP32-024 and the ESP32-035 the LED stays dark.
 - **If GPIO4 can't be measured**, `model()` is unknown and a shared-touch 240×320
   board is set up as a 3.2" — so on an ESP32-024 the colors come out inverted and touch
-  runs sideways. Starting WiFi after `begin()` avoids it.
+  runs sideways — and a 320×480 one as a 32E 3.5" / 4.0", so on an ESP32-035 touch
+  runs backwards left-to-right and green and blue are swapped. Starting WiFi after
+  `begin()` avoids it.
 - `cydr_redLedProbeMillivolts()` returns the reading behind the answer (0 when none
   was taken), for a sketch that wants to log it.
 

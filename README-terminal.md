@@ -120,10 +120,15 @@ the cursor was on that bottom line, it moves up one.
 
 ### The cursor
 
-`setCursorStyle(CYDR_CURSOR_BLOCK)` (the default), `CYDR_CURSOR_UNDERLINE` or
-`CYDR_CURSOR_OFF`. It blinks by itself. The terminal only remembers the line the
-cursor is on, so after `setCursor()` moves to a line printed earlier, the cursor hides
-over text it can't redraw, and reappears as you print there.
+`setCursorStyle(CYDR_CURSOR_BLOCK)` (the default), `CYDR_CURSOR_UNDERLINE`,
+`CYDR_CURSOR_BAR` (a thin line at the left of the cell, like the caret in a desktop
+text box) or `CYDR_CURSOR_OFF`. It blinks by itself, in the current text color.
+
+The terminal only remembers the line the cursor is on. When `setCursor()` moves to a
+line printed earlier, the terminal reads the pixels under the cursor back from the
+screen, so it can put them back when the cursor blinks off. All six resistive CYDs
+can do this. On a screen that can't, which `readbackAvailable()` reports, the
+cursor hides over that old text and reappears as you print there.
 
 ## Scrolling
 

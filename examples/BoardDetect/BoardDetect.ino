@@ -2,7 +2,7 @@
  * BoardDetect - which board is this?
  *
  * For the resistive-touch "Cheap Yellow Display" boards: ESP32-2432S028,
- * ESP32-32E 2.8", 3.2", 3.5", 4.0", and ESP32-024 2.4" (XPT2046 touch; board
+ * ESP32-32E 2.8", 3.2", 3.5", 4.0", ESP32-024 2.4" and ESP32-035 3.5" (XPT2046 touch; board
  * and panel detected at start-up).
  *
  * Runs the library's board detection and shows the result on the screen (and
@@ -22,7 +22,7 @@
  *   display.board()                 own-touch or shared-touch wiring
  *   display.panel() / panelName()   ILI9341, ST7789 or ST7796
  *   display.redLedPin()             4 or 22 (-1 if WiFi was on first)
- *   display.greenLedPin() / blueLedPin()   16 / 17 (17 / 16 on the ESP32-024)
+ *   display.greenLedPin() / blueLedPin()   16 / 17 (17 / 16 on the ESP32-024 / -035)
  * See README-board-detection.md.
  *
  * Requires the following libraries:
@@ -47,8 +47,10 @@ static const uint32_t C_TITLE = 0x40C0FF;
 
 // The light sensor reads 0 (shown as the converter's ~142 mV floor) in
 // anything but near-darkness, and rises only in the dark: about 1.67 V on the
-// 2432S028 and 0.64 V on the ESP32-024 (bench, 2026-10-18).  300 mV splits
-// them.  The default 11 dB attenuation spans both.
+// 2432S028 and ESP32-035, 0.64 V on the ESP32-024 (bench, 2026-10-18 and
+// 2026-10-23).  300 mV splits them.  The default 11 dB attenuation spans both.
+// The ESP32-035's sensor sees the board's own backlight: in a closed box with
+// the screen lit it read only ~0.2 V.
 static const uint32_t DARK_MV = 300;
 
 // What each board has besides the screen (see README-board.md).  Every board
@@ -70,7 +72,8 @@ static BoardFacts factsFor(cydr_model_t m) {
         case CYDR_MODEL_32E_28:
         case CYDR_MODEL_32E_32:
         case CYDR_MODEL_32E_35_40: return {true,  true,  false, true};
-        case CYDR_MODEL_024:       return {true,  false, true,  false};
+        case CYDR_MODEL_024:
+        case CYDR_MODEL_035:       return {true,  false, true,  false};
         default: gKnown = false;   return {false, false, false, display.redLedPin() == 22};
     }
 }

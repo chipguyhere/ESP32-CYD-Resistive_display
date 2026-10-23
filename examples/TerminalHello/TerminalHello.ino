@@ -5,7 +5,7 @@
  * No LVGL: print() and printf() write straight onto a grid of character
  * cells, and the panel's own hardware scrolls the text.  This sketch shows
  * colors, printf padding, tabs, clear-to-end-of-line, symbols, box drawing
- * and the three cursor styles, then counts upward forever so you can watch
+ * and the four cursor styles, then counts upward forever so you can watch
  * it scroll.
  *
  * Hardware scrolling only works in portrait, the panel's long axis.  For a
@@ -23,8 +23,8 @@ void setup() {
         Serial.println("Display init failed!");
         while (1) delay(100);
     }
-    Serial.printf("Terminal: %s, %d x %d cells\n", display.modelName(),
-                  term.columns(), term.rows());
+    Serial.printf("Terminal: %s, %d x %d cells, readback %s\n", display.modelName(),
+                  term.columns(), term.rows(), term.readbackAvailable() ? "yes" : "no");
 
     term.setTextColor(CYDR_YELLOW);
     term.println("Hello, CYD!");
@@ -55,12 +55,21 @@ void setup() {
     term.print("└──┴──┘\n");
     term.setTextColor(CYDR_WHITE);
 
-    // The three cursor styles, two seconds each.
+    // The cursor can sit on text printed earlier: here, on the "O" of "OK".
+    int16_t row = term.cursorRow();
+    term.setCursor(1, row - 2);
+    delay(2500);
+    term.setCursor(0, row);
+
+    // The four cursor styles, two seconds each.
     term.print("block ");
     term.setCursorStyle(CYDR_CURSOR_BLOCK);
     delay(2000);
     term.print("\rline  ");
     term.setCursorStyle(CYDR_CURSOR_UNDERLINE);
+    delay(2000);
+    term.print("\rbar   ");
+    term.setCursorStyle(CYDR_CURSOR_BAR);
     delay(2000);
     term.print("\roff   ");
     term.setCursorStyle(CYDR_CURSOR_OFF);

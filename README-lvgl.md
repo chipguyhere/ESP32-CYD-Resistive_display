@@ -91,6 +91,12 @@ themselves out from the screen size at run time, so the same `ui.cpp` works in a
 orientation and even on a different-sized board. Good examples of how an LVGL app is
 put together.
 
+### LvglRotation — turning the screen while the app runs
+
+Tap **Rotate** (or press BOOT) and the screen turns a quarter-turn, touch and all. It
+shows the one call that does it, `lv_setup.setRotation()`, and how to build a screen
+that rearranges itself to fit. See [Rotation](#rotation).
+
 ### MP3Player — sound, as a worked example
 
 The reference for **using the speaker**: it plays `*.mp3` files from the SD card
@@ -160,7 +166,9 @@ alignment travel best; fixed pixel positions may need adjusting.)
 ### Rotation
 
 Pass `0`–`3` (or the matching degrees) to `lv_setup.begin()`. Display and touch rotate
-together.
+together. Each step turns the **picture a quarter-turn clockwise**, so to read it you turn
+the board a quarter-turn **counter-clockwise**. That is the same direction as LVGL's own
+`LV_DISPLAY_ROTATION_90`, TFT_eSPI and Arduino_GFX (checked on the boards, 2026-10-23).
 
 | rotation | degrees | orientation | 2.4" / 2.8" / 3.2" | 3.5" / 4.0" |
 |---|---|---|---|---|
@@ -171,6 +179,15 @@ together.
 
 `90` / `180` / `270` work as aliases for `1` / `2` / `3` (so `lv_setup.begin(90)` is
 landscape). For the SquareLine example, size your SquareLine project to match.
+
+**Turning it while the app runs.** `lv_setup.setRotation(r)` takes the same values and
+changes the display, touch and LVGL together; `lv_setup.rotation()` says which one is
+active. LVGL then redraws the whole screen at the new size. Parts of your screen that
+are placed with flex or grid layouts, percentage sizes or `lv_obj_align()` move to fit
+by themselves; anything placed at a fixed x/y stays where it was, so move it yourself
+after the call. Call it from `loop()` (or wherever `lv_timer_handler()` runs) — from a
+button's callback, just set a flag and act on it in `loop()`, as the `LvglRotation`
+example does. Tested on six boards, every panel type, 2026-10-23.
 
 ## Touch calibration
 

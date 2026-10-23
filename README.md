@@ -12,6 +12,7 @@ by many vendors. One library runs all of these:
 | **ESP32-32E 3.5"** | 3.5", 320×480 | *3.5" LCD Display / ESP32-32E 320x480 / Resistance Touch* on the back |
 | **ESP32-32E 4.0"** | 4.0", 320×480 | *4.0" LCD Display / ESP32-32E 320x480 / Resistance Touch* on the back |
 | **ESP32-024** | 2.4", 240×320 | "ESP32-024" on the back; a battery connector; three buttons (RST, BOOT, SW1) |
+| **ESP32-035** | 3.5", 320×480 | "ESP32-035" on the back; a light sensor; three buttons (RST, BOOT, SW1) |
 
 On the ESP32-32E boards that writing is three lines on the back of the board: the
 size, then the board name and resolution, then *Resistance Touch*.
@@ -20,8 +21,7 @@ You don't tell the library which one you have: it checks when it starts and sets
 the screen and touch to match. A sketch that cares — say, to light the RGB LED, whose
 pins differ between boards — can ask it, and can ask which
 board it is.
-[How to ask](README-board-detection.md). (For the ESP32-024 this library replaces the
-older `chipguy_cyd2432S024_display`.)
+[How to ask](README-board-detection.md).
 
 The library handles the screen and the touch panel for you, so you don't have to
 think about either. What's left for you is the fun part: writing your app — and

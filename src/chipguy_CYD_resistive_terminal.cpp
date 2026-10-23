@@ -20,6 +20,12 @@
 
 #define CW CYDR_TERM_CELL_W
 static constexpr TickType_t BLINK_TICKS = pdMS_TO_TICKS(530);
+// Reading the panel back (for the cursor over text the terminal doesn't
+// hold).  Every panel reads cleanly at 1-5 MHz; 2 MHz keeps a whole cell under
+// about 6 ms, which nothing waits on.  See README-engineering.md, "Readback".
+static constexpr uint32_t READ_HZ = 2000000;
+static constexpr int BAR_W = 2;         // CYDR_CURSOR_BAR width, pixels
+static constexpr int UL_H = 3;          // CYDR_CURSOR_UNDERLINE height, pixels
 // CYDR_SCROLL_AUTO goes fast when the last four line scrolls all began
 // within this long (about ten lines a second or more).
 static constexpr TickType_t RAPID_TICKS = pdMS_TO_TICKS(400);
@@ -28,6 +34,7 @@ static constexpr TickType_t RAPID_TICKS = pdMS_TO_TICKS(400);
 #define CMD_CASET    0x2A
 #define CMD_RASET    0x2B
 #define CMD_RAMWR    0x2C
+#define CMD_RAMRD    0x2E
 #define CMD_VSCRDEF  0x33
 #define CMD_VSCRSADD 0x37
 
@@ -174,6 +181,14 @@ bool chipguy_CYD_resistive_terminal::begin(chipguy_CYD_resistive_display &displa
     _clearReq = true;
     _clearAll = true;
     _clearColor = _bg;
+
+    int khz = 0;
+    spi_device_get_actual_freq(_dev, &khz);
+    _wrHz = (uint32_t)khz * 1000;
+    _rbBpp = display.panel() == CYDR_PANEL_ST7796 ? 2 : 3;
+    _casetX0 = _casetX1 = -1;
+    _ghSaved = _ghShown = false;
+    _rbOK = _readbackCheck();
 
     _mutex = xSemaphoreCreateRecursiveMutexStatic(&_mutexBuf);
     _waitSem = xSemaphoreCreateBinaryStatic(&_waitBuf);
@@ -925,7 +940,7 @@ bool chipguy_CYD_resistive_terminal::_step() {
     portEXIT_CRITICAL(&_mux);
 
     return _doConfig() || _doClear() || _doBlit() || _renderPending() ||
-           _trySwitch() || _scrollStep();
+           _trySwitch() || _scrollStep() || _ghostUpdate();
 }
 
 // ── SPI plumbing ───────────────────────────────────────────────────────────
@@ -971,9 +986,10 @@ void chipguy_CYD_resistive_terminal::_cmd(uint8_t cmd, const uint8_t *data, int 
     }
 }
 
-// Address window in panel (MCU) coordinates, then RAMWR.  CASET is skipped
-// when the columns haven't changed.
-void chipguy_CYD_resistive_terminal::_window(int x0, int x1, int y0, int y1) {
+// Address window in panel (MCU) coordinates, then RAMWR (unless `read`: the
+// caller sends RAMRD itself).  CASET is skipped when the columns haven't
+// changed.
+void chipguy_CYD_resistive_terminal::_window(int x0, int x1, int y0, int y1, bool read) {
     uint8_t d[4];
     if (x0 != _casetX0 || x1 != _casetX1) {
         d[0] = x0 >> 8; d[1] = x0; d[2] = x1 >> 8; d[3] = x1;
@@ -983,7 +999,7 @@ void chipguy_CYD_resistive_terminal::_window(int x0, int x1, int y0, int y1) {
     }
     d[0] = y0 >> 8; d[1] = y0; d[2] = y1 >> 8; d[3] = y1;
     _cmd(CMD_RASET, d, 4);
-    _cmd(CMD_RAMWR, nullptr, 0);
+    if (!read) _cmd(CMD_RAMWR, nullptr, 0);
 }
 
 // Queue pixel data by DMA.  Waits for the previous transfer first, so the
@@ -1035,6 +1051,7 @@ bool chipguy_CYD_resistive_terminal::_doConfig() {
     portEXIT_CRITICAL(&_mux);
     if (!req) return false;
     _busBegin();
+    _ghostLift();
     _casetX0 = _casetX1 = -1;
     _sendScrollDef(T, V, B);
     _sendVsp(vtop, T, V, B);
@@ -1056,6 +1073,7 @@ bool chipguy_CYD_resistive_terminal::_doClear() {
     portEXIT_CRITICAL(&_mux);
 
     _busBegin();
+    _ghShown = _ghSaved = false;        // cleared over: nothing to put back
     _sendVsp(0, T, V, B);
     uint16_t be = __builtin_bswap16(color);
     for (int i = 0; i < _W; i++) _half(0)[i] = _half(1)[i] = be;
@@ -1081,6 +1099,7 @@ bool chipguy_CYD_resistive_terminal::_doBlit() {
     portEXIT_CRITICAL(&_mux);
 
     _busBegin();
+    _ghostLift();
     int bw = r->x1 - r->x0;
     int h = 0;
     int y = r->y0;
@@ -1139,6 +1158,7 @@ bool chipguy_CYD_resistive_terminal::_renderPending() {
     portEXIT_CRITICAL(&_mux);
 
     _busBegin();
+    _ghostLift();
     _renderRuns(bits, gen, top, a - top, b - top, true);
     _busEnd();
 
@@ -1253,7 +1273,6 @@ int chipguy_CYD_resistive_terminal::_renderCell(int c, int py, uint16_t *out) {
     uint16_t fg = cell.fg, bg = cell.bg;
     bool cur = _cursorStyle != CYDR_CURSOR_OFF && _blinkOn && _curTop == _lineTop &&
                _curCol == c;
-    if (cur && _cursorStyle == CYDR_CURSOR_BLOCK) { uint16_t t = fg; fg = bg; bg = t; }
     uint32_t len;
     bool wide;
     const uint8_t *g = _glyph(cell.ch, len, wide);
@@ -1265,8 +1284,13 @@ int chipguy_CYD_resistive_terminal::_renderCell(int c, int py, uint16_t *out) {
     _palette(fg, bg);
     if (g) decodeRow(g, g + len, w, py, _pal, out);
     else for (int i = 0; i < w; i++) out[i] = _pal[0];
-    if (cur && _cursorStyle == CYDR_CURSOR_UNDERLINE && py >= _CH - 3)
-        for (int i = 0; i < CW; i++) out[i] = _pal[15];
+    if (cur) {                               // drawn over the cell in the text color
+        int n = _cursorStyle == CYDR_CURSOR_BLOCK ? w
+              : _cursorStyle == CYDR_CURSOR_BAR   ? BAR_W
+              : py >= _CH - UL_H                  ? CW : 0;
+        uint16_t cc = __builtin_bswap16(_fg);
+        for (int i = 0; i < n; i++) out[i] = cc;
+    }
     return w;
 }
 
@@ -1310,6 +1334,7 @@ bool chipguy_CYD_resistive_terminal::_scrollStep() {
     int m = T + pmod(a, V);
 
     _busBegin();
+    _ghostLift();
     if (clean) {                               // blank it while still at the far edge
         _fillBlank(bg);
         _window(0, _W - 1, m, m);
@@ -1342,4 +1367,169 @@ bool chipguy_CYD_resistive_terminal::_scrollStep() {
         portEXIT_CRITICAL(&_mux);
     }
     return true;
+}
+
+// ── Readback cursor ────────────────────────────────────────────────────────
+// Over a cell the terminal doesn't hold (CELL_KEEP), the cursor can't be
+// drawn from the cell array, so the pixels it covers are read back from the
+// panel into the start of the DMA buffer, and written back to take it off.
+// The buffer is free whenever nothing else is being drawn; every step that
+// uses it puts the pixels back first (_ghostLift), and the cursor is read
+// and drawn again once the terminal is idle.
+
+// Read a w x h panel rect into `out` (in _dma, 4-byte aligned) as
+// big-endian RGB565.  The panel sends a dummy byte, then 3 bytes a pixel
+// (RGB666, ILI9341 / ST7789) or 2 (RGB565, ST7796); rows are read a few at a
+// time so the raw bytes fit in the buffer, and packed down in place.  Bus
+// held by the caller.
+void chipguy_CYD_resistive_terminal::_readRect(int x, int y, int w, int h, uint16_t *out) {
+    uint8_t *end = (uint8_t *)_dma + sizeof(_dma);
+    for (int r0 = 0; r0 < h;) {
+        uint8_t *at = (uint8_t *)(out + r0 * w);   // 4-aligned: w is even
+        int rows = min<int>(h - r0, (end - at - 4) / (w * _rbBpp));
+        int n = (1 + rows * w * _rbBpp + 3) & ~3;
+        _window(x, x + w - 1, y + r0, y + r0 + rows - 1, true);
+        spi_transaction_t t = {};
+        t.length = 8;
+        t.flags = SPI_TRANS_USE_TXDATA | SPI_TRANS_CS_KEEP_ACTIVE;
+        t.tx_data[0] = CMD_RAMRD;
+        t.user = (void *)0;
+        t.override_freq_hz = READ_HZ;
+        spi_device_polling_transmit(_dev, &t);
+        t = {};
+        t.length = n * 8;
+        t.rx_buffer = at;
+        t.user = (void *)1;
+        t.flags = SPI_TRANS_DMA_BUFFER_ALIGN_MANUAL;   // aligned: never a heap bounce buffer
+        spi_device_polling_transmit(_dev, &t);
+        const uint8_t *in = at + 1;
+        uint16_t *o = (uint16_t *)at;
+        for (int i = 0; i < rows * w; i++) {   // output trails input: safe in place
+            uint16_t v;
+            if (_rbBpp == 3) {
+                v = (uint16_t)((in[0] >> 3) << 11 | (in[1] >> 2) << 5 | in[2] >> 3);
+                v = __builtin_bswap16(v);
+                in += 3;
+            } else {
+                v = (uint16_t)(in[0] | in[1] << 8);   // already big-endian on the wire
+                in += 2;
+            }
+            o[i] = v;
+        }
+        r0 += rows;
+    }
+    spi_transaction_t t = {};               // NOP at the write clock again
+    t.length = 8;
+    t.flags = SPI_TRANS_USE_TXDATA;
+    t.tx_data[0] = 0x00;
+    t.user = (void *)0;
+    t.override_freq_hz = _wrHz;
+    spi_device_polling_transmit(_dev, &t);
+    _blankValid = false;
+}
+
+// Fill a rect with one color, sent from `spare` (the rest of _dma).
+void chipguy_CYD_resistive_terminal::_fillRect(int x, int y, int w, int h, uint16_t color,
+                                               uint16_t *spare) {
+    int room = (int)(_dma + sizeof(_dma) / 2 - spare);
+    int total = w * h, n = min(room, total);
+    uint16_t be = __builtin_bswap16(color);
+    for (int i = 0; i < n; i++) spare[i] = be;
+    _window(x, x + w - 1, y, y + h - 1);
+    for (int done = 0; done < total; done += n) _queue(spare, min(n, total - done) * 2);
+    _blankValid = false;
+}
+
+// Put the saved pixels back: one rect, or two across the wrap point.
+void chipguy_CYD_resistive_terminal::_ghostWrite() {
+    const uint16_t *src = _dma;
+    for (int k = 0; k < 2 && _ghH[k]; k++) {
+        _window(_ghX, _ghX + _ghW - 1, _ghY[k], _ghY[k] + _ghH[k] - 1);
+        _queue(src, _ghW * _ghH[k] * 2);
+        src += _ghW * _ghH[k];
+    }
+}
+
+// Before a step reuses the DMA buffer: put the covered pixels back.  Bus held.
+void chipguy_CYD_resistive_terminal::_ghostLift() {
+    if (_ghShown) {
+        _ghostWrite();
+        _waitDma();                         // the step is about to draw into _dma
+        _ghShown = false;
+    }
+    _ghSaved = false;
+}
+
+// When idle: show, move or take off the cursor over an unheld cell.
+bool chipguy_CYD_resistive_terminal::_ghostUpdate() {
+    if (!_rbOK) return false;
+    bool want = false;
+    int x = 0, w = 0, y[2] = {0, 0}, h[2] = {0, 0};
+    uint16_t color;
+    portENTER_CRITICAL(&_mux);
+    cydr_cursor_t st = _cursorStyle;
+    if (st != CYDR_CURSOR_OFF && _blinkOn && _curTop == _lineTop && _curCol < _cols &&
+        _cells[_curCol].ch == CELL_KEEP && !_swPending && _vtop == _vtopT &&
+        _curTop >= _vtop && _curTop + _CH <= _vtop + _VSA) {
+        want = true;
+        x = _curCol * CW;
+        w = st == CYDR_CURSOR_BAR ? BAR_W : CW;
+        int rh = st == CYDR_CURSOR_UNDERLINE ? UL_H : _CH;
+        int32_t r = _ring(_curTop + (_CH - rh));      // underline: its bottom rows
+        // Split where frame memory wraps to the top of the scroll area.
+        h[0] = min<int>(rh, _VSA - r);
+        h[1] = rh - h[0];
+        y[0] = _fixT + r;
+        y[1] = _fixT;
+    }
+    color = _fg;
+    portEXIT_CRITICAL(&_mux);
+
+    bool same = want && _ghSaved && x == _ghX && w == _ghW && y[0] == _ghY[0] &&
+                h[0] == _ghH[0] && y[1] == _ghY[1] && h[1] == _ghH[1];
+    if (_ghShown && same && color == _ghColor) return false;
+    if (!_ghShown && !want) return false;
+    _busBegin();
+    if (_ghShown) {                         // take it off (and keep the pixels)
+        _ghostWrite();
+        _ghShown = false;
+    }
+    if (want) {
+        if (!same) {
+            _waitDma();
+            _readRect(x, y[0], w, h[0], _dma);
+            if (h[1]) _readRect(x, y[1], w, h[1], _dma + w * h[0]);
+            _ghX = x; _ghW = w;
+            _ghY[0] = y[0]; _ghH[0] = h[0];
+            _ghY[1] = y[1]; _ghH[1] = h[1];
+            _ghSaved = true;
+        }
+        uint16_t *spare = _dma + w * (h[0] + h[1]);
+        _fillRect(x, y[0], w, h[0], color, spare);
+        if (h[1]) _fillRect(x, y[1], w, h[1], color, spare);
+        _ghColor = color;
+        _ghShown = true;
+    }
+    _busEnd();
+    return true;
+}
+
+// At begin(), before the task: write a few faint pixels -- red, green, blue
+// and a mix -- and read them back.  Only an exact match turns readback on.
+// The start-up clear wipes them.
+bool chipguy_CYD_resistive_terminal::_readbackCheck() {
+    if (CW * _CH + 64 > (int)(sizeof(_dma) / 2)) return false;   // no room for a cell
+    static const uint16_t probe[4] = {0x1000, 0x0040, 0x0002, 0x5AA5};
+    _busBegin();
+    for (int i = 0; i < 4; i++) _dma[i] = __builtin_bswap16(probe[i]);
+    _window(0, 3, 0, 0);
+    _queue(_dma, 8);
+    _waitDma();
+    for (int i = 0; i < 4; i++) _dma[i] = 0;
+    _readRect(0, 0, 4, 1, _dma);
+    bool ok = true;
+    for (int i = 0; i < 4; i++) ok &= _dma[i] == __builtin_bswap16(probe[i]);
+    _busEnd();
+    _casetX0 = _casetX1 = -1;
+    return ok;
 }

@@ -9,7 +9,6 @@
 #include <SPI.h>
 #include <SD.h>
 #include <AudioFileSourceSD.h>
-#include <AudioFileSourceID3.h>
 #include <AudioGeneratorMP3.h>
 #include "AudioOutputCydDac.h"
 #include "id3scan.h"
@@ -48,7 +47,6 @@ static PlayerStatus status = { PLAYER_STOPPED, -1, 0, 0, 0, "", "" };
 static AudioOutputCydDac *out;
 static AudioGeneratorMP3 *mp3;
 static AudioFileSourceSD *file;
-static AudioFileSourceID3 *id3;
 
 // ---------------------------------------------------------------------------
 // Playlist
@@ -115,9 +113,38 @@ static bool paused = false;
 
 static void stopTrack() {
     if (mp3 && mp3->isRunning()) mp3->stop();   // also flushes the output to mid-scale
-    delete id3;  id3 = nullptr;
     delete file; file = nullptr;
     paused = false;
+}
+
+// Where the audio starts: past an ID3v2 tag, if the file opens with one.
+// The MP3 decoder doesn't know tags; it hunts through one for a frame header,
+// and a tag with album art in it can be hundreds of KB.  (ESP8266Audio's
+// AudioFileSourceID3 skips it too, but a byte at a time, inside the decoder's
+// first loop() call.)  Title and artist come from id3scan instead.
+static uint32_t audioStart(AudioFileSource *f) {
+    uint8_t h[10];
+    if (f->read(h, 10) != 10 || memcmp(h, "ID3", 3) != 0) return 0;
+    const uint32_t size = (uint32_t)(h[6] & 0x7F) << 21 | (uint32_t)(h[7] & 0x7F) << 14
+                        | (uint32_t)(h[8] & 0x7F) << 7  | (h[9] & 0x7F);
+    return 10 + size + ((h[5] & 0x10) ? 10 : 0);   // header + tag (+ footer)
+}
+
+// Called by the decoder on every decoding error.  AudioGeneratorMP3::loop()
+// retries a bad frame at once, inside the same loop() call, so on a damaged
+// file -- or anything else that isn't audio -- it can go seconds without
+// returning to audioTask(), and the task watchdog fires.  Sleeping here paces
+// that search.  The first few errors of each track go to Serial: a file that
+// keeps producing them is damaged, or isn't really MP3.  Not logged:
+// MAD_ERROR_BUFLEN (0x1), which is how every track ends -- the decoder asks
+// for another frame and the file has none.
+static uint16_t decodeErrors = 0;     // this track's; reset when one starts
+
+static void onDecodeError(void *, int code, const char *text) {
+    if (code != 0x1 && decodeErrors < 20 && currentTrack >= 0)
+        Serial.printf("player: %s: %s (code 0x%x)\n", tracks[currentTrack].file.c_str(), text, code);
+    if (decodeErrors < 0xFFFF) decodeErrors++;
+    vTaskDelay(1);
 }
 
 static bool startTrack(int idx) {
@@ -138,7 +165,8 @@ static bool startTrack(int idx) {
         setStatus(PLAYER_STOPPED, -1);
         return false;
     }
-    id3 = new AudioFileSourceID3(file);   // skips the tag for the decoder
+    file->seek(audioStart(file), SEEK_SET);
+    decodeErrors = 0;
 
     currentTrack = idx;
     setStatus(PLAYER_STOPPED, idx);       // clears stale title/artist
@@ -146,7 +174,7 @@ static bool startTrack(int idx) {
     strlcpy(status.title, tracks[idx].title.c_str(), sizeof(status.title));
     strlcpy(status.artist, tracks[idx].artist.c_str(), sizeof(status.artist));
     portEXIT_CRITICAL(&statusMux);
-    if (!mp3->begin(id3, out)) {
+    if (!mp3->begin(file, out)) {
         Serial.printf("player: decoder failed on %s\n", path.c_str());
         stopTrack();
         currentTrack = -1;
@@ -198,6 +226,7 @@ static void audioTask(void *) {
     out->setVolume(requestedVolume);
     out->setDither(requestedDither);
     mp3 = new AudioGeneratorMP3();
+    mp3->RegisterStatusCB(onDecodeError, nullptr);
 
     uint32_t lastProgress = 0;
     uint32_t lastUnderruns = 0;
@@ -217,6 +246,12 @@ static void audioTask(void *) {
                 int next = (currentTrack + 1) % tracks.size();
                 if (!startTrack(next)) setStatus(PLAYER_STOPPED, -1);
             }
+            // Every pass, not only when the DMA write blocked.  If a file ever
+            // decodes slower than real time, the DMA never fills, the write
+            // never blocks, and loop() -> refuse -> loop() would run with no
+            // sleep at all and trip the task watchdog.  One tick per chunk
+            // (tens of ms) is nothing against a 12-chunk DMA queue.
+            vTaskDelay(1);
         }
 
         if (millis() - lastProgress >= 200) {

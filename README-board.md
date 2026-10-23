@@ -25,6 +25,7 @@ All are a classic **ESP32** (not S3) with **4 MB flash, no PSRAM**. Build for
 | **ESP32-32E 3.5"** | silkscreen *3.5" LCD Display / ESP32-32E 320x480 / Resistance Touch* | shared touch | ST7796, 320×480 |
 | **ESP32-32E 4.0"** | silkscreen *4.0" LCD Display / ESP32-32E 320x480 / Resistance Touch* | shared touch | ST7796, 320×480 |
 | **ESP32-024** | 2.4"; "ESP32-024" in the copper on the back; battery connector; three buttons (RST, BOOT, SW1) | shared touch | ST7789, 240×320 |
+| **ESP32-035** | 3.5"; "ESP32-035" in the copper on the back; light sensor; three buttons (RST, BOOT, SW1) | shared touch | ST7796, 320×480 |
 
 What else each one has, by `display.model()` (the `BoardDetect` example shows it):
 
@@ -35,6 +36,7 @@ What else each one has, by `display.model()` (the `BoardDetect` example shows it
 | `CYDR_MODEL_32E_32` | **yes** | **GPIO34** = cell ÷ 2 | no | yes | **yes**, GPIO4, LOW = on |
 | `CYDR_MODEL_32E_35_40` | **yes** | **GPIO34** = cell ÷ 2 | no | yes | **yes**, GPIO4, LOW = on |
 | `CYDR_MODEL_024` | **yes** | none | **yes**, GPIO34 | yes | no — always on |
+| `CYDR_MODEL_035` | **yes** (SW1, as the ESP32-024) | none | **yes**, GPIO34 | yes | no — GPIO4 is the red LED |
 
 All four 32E boards read the same battery the same way: one charged cell moved to
 connector to connector read 2.07 V on GPIO34 on each, about 4.14 V at the cell; with no
@@ -42,11 +44,14 @@ cell they read 2.08–2.12 V, the charger's own output (bench, 2026-10-18). The 
 switch was heard working on the 32E 2.8", 3.2" and 3.5"; on the 4.0" it is inferred from
 the identical GPIO4 reading.
 
-**The light sensors only see darkness.** On both boards that have one, GPIO34 reads 0
+**The light sensors only see darkness.** On every board that has one, GPIO34 reads 0
 in room light and under a flashlight alike, and rises only when the board is covered:
-to about 1.67 V on the 2432S028 and 0.64 V on the ESP32-024 (one unit each,
-2026-10-18). Treat it as a "is it dark?" input, read with `analogReadMilliVolts(34)` at
-the default attenuation. [Why](README-engineering.md#light-sensor).
+to about 1.67 V on the 2432S028 and the ESP32-035 and 0.64 V on the ESP32-024 (one unit
+each, 2026-10-18; the ESP32-035 2026-10-23). Treat it as a "is it dark?" input, read
+with `analogReadMilliVolts(34)` at the default attenuation. On the ESP32-035 it also
+sees the board's own screen: in a closed box with the backlight on it read only about
+0.2 V, so turn the backlight off to ask whether the room is dark.
+[Why](README-engineering.md#light-sensor).
 
 The ESP32-32E silkscreen is three lines — size, board name and resolution, *Resistance
 Touch* — shown here with `/` between them.
@@ -72,7 +77,7 @@ Four panel setups turn up across these boards:
 | ILI9341 | 240×320 | 2432S028, 32E 2.8" | BGR color order |
 | ST7789 | 240×320 | 2432S028, 32E 2.8", ESP32-024 | RGB, columns the other way; color inversion **off** |
 | ST7789 | 240×320 | 32E 3.2" | as above, but color inversion **on** |
-| ST7796 | 320×480 | 32E 3.5", 4.0" | BGR |
+| ST7796 | 320×480 | 32E 3.5", 4.0", ESP32-035 | BGR |
 
 Driving one with another's settings gives a mirror-image picture with red and blue
 swapped, or inverse video (white background, cyan for red). `display.begin()` works
@@ -91,10 +96,10 @@ display.panel();       // CYDR_PANEL_ILI9341 / _ST7789 / _ST7796, after begin()
 display.panelName();   // "ILI9341" / "ST7789" / "ST7796"
 display.board();       // CYDR_BOARD_OWN_TOUCH or CYDR_BOARD_SHARED_TOUCH
 display.nativeWidth(); // 240 or 320 (nativeHeight(): 320 or 480)
-display.redLedPin();   // 4 (2432S028, ESP32-024) or 22 (every ESP32-32E board)
-display.greenLedPin(); // 16, or 17 on the ESP32-024
-display.blueLedPin();  // 17, or 16 on the ESP32-024
-display.model();       // CYDR_MODEL_024, _2432S028, _32E_28, _32E_32, _32E_35_40
+display.redLedPin();   // 4 (2432S028, ESP32-024, ESP32-035) or 22 (every ESP32-32E board)
+display.greenLedPin(); // 16, or 17 on the ESP32-024 / -035
+display.blueLedPin();  // 17, or 16 on the ESP32-024 / -035
+display.model();       // CYDR_MODEL_024, _035, _2432S028, _32E_28, _32E_32, _32E_35_40
 display.modelName();   // "ESP32-024 2.4\"", ...
 display.setPanel(CYDR_PANEL_ST7789);   // before begin(): skip panel detection, force a type
 ```
@@ -109,8 +114,11 @@ all of them; all four rotations and touch on the 32E 2.8" (both panels); touch, 
 and calibration on the 3.2"; touch on the 2432S028 and the 4.0". On 2026-10-18, all six
 boards (2432S028, 32E 2.8" ST7789, 3.2", two 3.5"/4.0", ESP32-024) at once: model
 detection, corner colors and touch targets in rotations 0 and 1, and an SD mount —
-all passed. **TODO (bench):** rotations 2 and 3 on the 3.2", 3.5", 4.0" and ESP32-024;
-`TouchCalibrate` on the ESP32-024.
+all passed. On 2026-10-23, six boards (32E 2.8" ILI9341 and ST7789, 3.2", two 3.5"/4.0",
+ESP32-035): all four rotations draw correctly, touch follows in each, and every board
+turns the picture the same way — clockwise from 0 to 1, as LVGL, TFT_eSPI and
+Arduino_GFX do on the same panel. **TODO (bench):** rotations 2 and 3 on the 2432S028
+and ESP32-024; `TouchCalibrate` on the ESP32-024 and ESP32-035.
 
 **GPIO12 is not a display reset** on the 2.8" boards: holding it LOW did nothing to
 either panel. The driver issues a software reset instead. Where the panel's hardware
@@ -138,8 +146,8 @@ battery, no battery lead, no speaker. Buy or make MX1.25 pigtails. Pins are list
 
 | What | GPIO | Notes |
 |---|---|---|
-| RGB LED, red | **22** | Common-anode, **active LOW** — `LOW` lights it, `HIGH` turns it off. (Confirmed. On the 2432S028 and ESP32-024 red is GPIO4; `display.redLedPin()` returns the right one.) |
-| RGB LED, green / blue | 16 / 17 | Same polarity. (Confirmed.) Neither pin is shared with anything else. On the ESP32-024 they are the other way round; `display.greenLedPin()` / `blueLedPin()` return the right ones. |
+| RGB LED, red | **22** | Common-anode, **active LOW** — `LOW` lights it, `HIGH` turns it off. (Confirmed. On the 2432S028, ESP32-024 and ESP32-035 red is GPIO4; `display.redLedPin()` returns the right one.) |
+| RGB LED, green / blue | 16 / 17 | Same polarity. (Confirmed.) Neither pin is shared with anything else. On the ESP32-024 and ESP32-035 they are the other way round; `display.greenLedPin()` / `blueLedPin()` return the right ones. |
 | Audio amplifier enable | **4** | **LOW = amplifier on.** A pull-up holds it off at reset. See [README-sound.md](README-sound.md). |
 | Battery voltage | **34** | Analog input, input-only: reads half the cell voltage. See [README-power.md](README-power.md#battery-measurement). |
 | BOOT button | 0 | Pulled up; reads LOW when pressed. Usable as a UI button and as a deep-sleep wake source. It is also the strapping pin: holding it through a reset enters the bootloader instead of your sketch. |
@@ -221,6 +229,26 @@ everything here exactly as on the 32E 2.8" except where the table says otherwise
 | GPIO21, 22, 35 | 21 backlight; 22 and 35 on headers | 21 floats — **TODO (bench):** brought out anywhere? | **TODO (bench)** | **CN1** (labelled for a temperature / humidity sensor): 3.3V, IO21, IO22, GND, with a 10 kΩ pull-up on IO21 — an I²C sensor port, `Wire.begin(21, 22)` (add a pull-up on IO22). **P3**: IO21, IO22, IO35, GND (schematic) |
 | Battery, charger | none — USB or the VIN pin only | yes; GPIO34 battery reading confirmed | yes; GPIO34 battery reading confirmed | battery connector and an FM5324GA charger / 5 V booster; no battery reading — see [README-power.md](README-power.md) |
 | Third button | — | — | — | **SW1**, the FM5324GA's power key, not wired to the ESP32 (schematic; no GPIO changed when pressed) |
+
+**ESP32-035 in short.** The 32E 3.5"'s screen and touch wiring (backlight GPIO27, ST7796,
+touch on the display bus) with the ESP32-024's LED and sensors: red LED on GPIO4, green
+and blue on 17 and 16, a light sensor on GPIO34 (≈1.67 V in the dark, with the
+backlight off), and so no battery reading and no amplifier switch. Touch X runs the
+other way from the 32E 3.5"'s; the library handles it. "ESP32-035" is in the copper on
+the back. What one unit showed on USB power (2026-10-23):
+
+- **SW1** changed no GPIO and didn't reset the ESP32 (every free pin watched under
+  both pulls, plus ADC on 34 / 35 / 36 / 39). Like the ESP32-024's, it is presumably
+  the battery chip's key — **TODO (bench):** what it does on battery alone, and which
+  charger chip is fitted.
+- **GPIO21** is pulled up on the board (as on the ESP32-024); 22, 25 and 26 float; 0, 5,
+  19, 23, 32 and 33 are pulled up. **TODO (bench):** whether 21 / 22 / 35 reach a header
+  as on the ESP32-024.
+- **`MP3Player`** mounts the card at 20 MHz and plays cleanly, with no pops and the red
+  LED left dark — the amplifier is always on, as on the ESP32-024. All four rotations
+  draw and track touch correctly (2026-10-23).
+- The 2-pin MX1.25 battery connector's silkscreen polarity matches the other boards'.
+  **TODO (bench):** `TouchCalibrate`; running on battery.
 
 **ESP32-2432S028 in short.** No battery and no power management: it runs from USB or
 5 V on its P1 header's VIN pin, and its regulators and USB chip keep drawing several mA
