@@ -12,7 +12,11 @@ by many vendors. One library runs all of these:
 | **ESP32-32E 3.5"** | 3.5", 320×480 | *3.5" LCD Display / ESP32-32E 320x480 / Resistance Touch* on the back |
 | **ESP32-32E 4.0"** | 4.0", 320×480 | *4.0" LCD Display / ESP32-32E 320x480 / Resistance Touch* on the back |
 | **ESP32-024** | 2.4", 240×320 | "ESP32-024" on the back; a battery connector; three buttons (RST, BOOT, SW1) |
-| **ESP32-035** | 3.5", 320×480 | "ESP32-035" on the back; a light sensor; three buttons (RST, BOOT, SW1) |
+| **ESP32-035** | 3.5", 320×480 | "ESP32-035" on the back (some also say "HW-951"); a light sensor; three buttons (RST, BOOT, SW1) |
+| **ESP32-2432S032** | 3.2", 240×320 | sold as ESP32-2432S032; a battery connector; three buttons (RST, BOOT, SW1). The capacitive **ESP32-2432S032C** works too |
+| **ESP32-2432S024C** | 2.4", 240×320 | capacitive touch; "ESP32-2432S024" on the back |
+| **Guition JC2432W328** | 2.8", 240×320 | capacitive touch; "JC2432W328" on the back |
+| **ESP32-3248S035C** | 3.5", 320×480 | capacitive touch; sold as ESP32-3248S035C; micro-USB only, no battery connector |
 
 On the ESP32-32E boards that writing is three lines on the back of the board: the
 size, then the board name and resolution, then *Resistance Touch*.
@@ -28,10 +32,14 @@ think about either. What's left for you is the fun part: writing your app — an
 first, choosing which of [two ways to drive the screen](#two-ways-to-drive-the-screen--pick-one)
 suits it.
 
-> **Is this your board?** It has to have **resistive** touch — the kind you press
-> with a fingernail or stylus, which feels slightly soft. Boards with **capacitive**
-> touch (glass that responds to a light finger, like a phone; the "C" in
-> ESP32-2432S032**C**) are not supported, even though they look the same.
+> **Is this your board?** Most boards here have **resistive** touch — the kind you
+> press with a fingernail or stylus, which feels slightly soft. Boards with
+> **capacitive** touch (glass that responds to a light finger, like a phone; the "C" in
+> a name like ESP32-2432S028**C**) work only if they're in the table above: the
+> **ESP32-2432S032C**, the **ESP32-2432S024C**, the **JC2432W328** and the
+> **ESP32-3248S035C**. Other capacitive
+> boards look the same but may not work. The library still finds their touch chip if
+> it's one it knows, but it can't tell which board it is.
 
 Across these boards there are four different screen setups, two of them behind the
 same 2.8" label. You don't need to know which one yours has.
@@ -157,13 +165,23 @@ it, then upload your real sketch over the top. It walks through three steps on s
    pick values. A **Save** button stores them.
 3. **Drawing test** — scribble to confirm it tracks cleanly.
 
+If something about your board looks wrong after calibrating — colors swapped, the
+picture mirrored, touch running backwards — `TouchCalibrate` can also correct that:
+hold BOOT for two seconds on its drawing test. The same screen can tell the library
+which board you have, if it guessed wrong. It can also say which size your 32E 3.5" /
+4.0" is. The library can't tell those two apart on its own. See
+[README-overrides.md](README-overrides.md).
+
+The capacitive boards (**ESP32-2432S032C**, **ESP32-2432S024C**, **JC2432W328**,
+**ESP32-3248S035C**) need
+none of this: their touch already reports screen positions, and `TouchCalibrate` goes
+straight to the drawing test.
+
 Everything it produces is saved in a small area of the ESP32's flash that survives
 reboots *and* uploading a new sketch. An LVGL app picks it up **automatically** when
 `lv_setup.begin()` runs; a text-terminal sketch loads it with two lines, shown in
 [README-terminal.md](README-terminal.md#touch). Do it once per board. (A board already calibrated with an
-earlier version of this library, or a 3.5" / 4.0" calibrated with
-`chipguy_ESP32-32E_CYD_4inch_display`, keeps that calibration. An ESP32-024 calibrated
-with the older `chipguy_cyd2432S024_display` needs calibrating again.)
+earlier version of this library keeps that calibration.)
 
 ---
 
@@ -171,8 +189,8 @@ with the older `chipguy_cyd2432S024_display` needs calibrating again.)
 
 Besides the screen, these boards have an **RGB LED**, a **BOOT button** you can use as
 a regular button, a few **small connectors**, a **speaker connector** and a **microSD
-slot**; the ESP32-32E 2.8" and the ESP32-024 also have a **battery connector with a
-charger**. This
+slot**; the ESP32-32E 2.8", the ESP32-024, the ESP32-035 and the ESP32-2432S032 also
+have a **battery connector with a charger**. This
 library leaves all of those alone so your sketch can use them. Want to hook up a
 **sensor**? Most small sensor boards use I²C, and the 32E 2.8" can talk I²C through its
 SPI connector as long as you're not using the SD card at the same time. The pins,
@@ -186,7 +204,7 @@ to be checked.
 
 ### TF / microSD card slot
 
-Every board has a microSD slot, and **it's wired the same way on all six boards**, so
+Every board has a microSD slot, and **it's wired the same way on every board**, so
 the same code reads the card on every one. The library doesn't touch it and doesn't
 include a file system, but **nothing about it conflicts with the screen** — the card
 has its own pins, and they're the ones Arduino's standard `SD` library expects, so
@@ -204,17 +222,27 @@ There is **no power switch** and no charge light, and the board can't turn itsel
 the best it can do is sleep, slowing the battery discharge. How to read the battery
 voltage, what the reading means, how to sleep and wake, and how to make a charge
 last are in **[README-power.md](README-power.md)** (written for the 32E 2.8"; the other
-32E boards read their battery the same way). The 2432S028 has no battery connector.
-The **ESP32-024** has one, with a different charger: on battery alone it stays off
-until you press **SW1** once, and two quick presses turn it off. Your sketch can't see
-SW1 or read the battery on that board.
+32E boards read their battery the same way). The 2432S028 and the ESP32-3248S035C have
+no battery connector.
+
+Boards with an **SW1** button (the ESP32-024, ESP32-035, ESP32-2432S032 / C,
+ESP32-2432S024C and JC2432W328) use it as a power button on battery. One press turns
+the board on. Turning it off takes either two quick presses or a 10-second hold,
+depending on the board. Your sketch can ask which with `display.powerOffHint()`, to
+show the user. If the button is hidden inside a case, `TouchCalibrate` can mark it
+absent. [Details](README-power.md#the-power-key-on-the-sw1-boards).
+The **ESP32-024** and **ESP32-035** have one, with a different charger: on battery alone
+the board stays off until you press **SW1** once, and two quick presses turn it off.
+Your sketch can't see SW1 or read the battery on those boards. The **ESP32-2432S032**
+works the same way, except that on some boards turning off takes a **10-second hold**
+of SW1 instead of two quick presses — it depends on the batch.
 
 ### Sound
 
 Every board has a small amplifier and a 2-pin speaker connector — good for beeps,
 voice and simple music (it's not hi-fi). On the ESP32-32E boards the amplifier is
-**off until your sketch turns it on**; on the 2432S028 and the ESP32-024 it is always
-on.
+**off until your sketch turns it on**; on the 2432S028, the ESP32-024, the ESP32-035 and
+the ESP32-2432S032 it is always on.
 Not every audio library plays nicely with this board's touch screen, so start from the
 **MP3Player** example (an LVGL one), which shows a working setup, rather than a
 generic ESP32 audio tutorial. The recipe, the traps and a copy-and-paste beep are in
@@ -233,6 +261,7 @@ generic ESP32 audio tutorial. The recipe, the traps and a copy-and-paste beep ar
 | [README-sound.md](README-sound.md) | You want the speaker to make a noise — a beep, a sample, an MP3. |
 | [README-sdcard.md](README-sdcard.md) | You want to read or write files on a microSD card — same pins on every board. |
 | [README-board-detection.md](README-board-detection.md) | Your sketch runs on more than one of these boards and needs to know which one it's on — for the LED's pins, or whether GPIO4 is the speaker switch. |
+| [README-overrides.md](README-overrides.md) | Your board looks wrong — colors swapped, picture mirrored, touch backwards — or the library named the wrong board or size: how to correct it from `TouchCalibrate` without changing any code. |
 | [README-engineering.md](README-engineering.md) | You want the electronics: the schematic, the parts, the measurements and the reasoning behind everything above. |
 
 ---

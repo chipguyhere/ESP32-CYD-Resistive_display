@@ -56,6 +56,15 @@ cleanly on it, with the red LED left dark **(listened, 2026-10-18)**. Because th
 amplifier is always on, anything that moves GPIO26 is heard: a sketch that sets pull-ups
 or pull-downs on it, or drives it as a plain GPIO, clicks the speaker.
 
+**The ESP32-2432S032 and 2432S032C** are wired as the ESP32-024: DAC on GPIO26, an
+amplifier (U5, part not printed) with its shutdown pin tied to ground and its supply on
+3.3 V, GPIO4 the red LED (schematic). `MP3Player` plays on both
+**(listened, 2026-10-29)**; the same GPIO26 caution applies.
+
+**The ESP32-2432S024C, JC2432W328 and ESP32-3248S035C** have not been checked for sound. The speaker
+pins, the amplifier and whether it can be switched off are **TODO (bench)**. GPIO4 is
+their red LED, not an amplifier switch.
+
 **GPIO25** is the touch clock only on the own-touch boards (2432S028, 32E 2.8"). On the
 3.2", 3.5" and 4.0" touch shares the display's bus and GPIO25 is not the library's — but
 something on those boards pulls it up, so the "channel 1 only" rule below still stands

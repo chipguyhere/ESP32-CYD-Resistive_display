@@ -33,6 +33,8 @@ if (!SD.begin(/*cs*/ 5, SPI, 20000000)) {     // 20 MHz for audio streaming
 | ESP32-32E 4.0" | 5 / 18 / 19 / 23 | **yes** | CS, MISO, MOSI pulled up on the board, SCK not (bench); header **TODO (bench)** |
 | ESP32-024 | 5 / 18 / 19 / 23 | **yes** | CS, MISO, MOSI pulled up on the board, SCK not (bench, two units); header **TODO (bench)** |
 | ESP32-035 | 5 / 18 / 19 / 23 | **yes** | CS, MISO, MOSI pulled up on the board, SCK not (bench); header **TODO (bench)** |
+| ESP32-2432S032 / -C | 5 / 18 / 19 / 23 (schematic) | **yes**, both | 10 kΩ pull-up network RN2 on the card lines (schematic); which lines, **TODO (bench)** |
+| ESP32-2432S024C, JC2432W328, ESP32-3248S035C | 5 / 18 / 19 / 23 assumed, as on every other board — **TODO (bench)** | **TODO (bench)** | **TODO (bench)** |
 
 "(bench)": with the card out, each pin was checked on one unit of each board (two of the
 32E 3.5" / 4.0" and two ESP32-024s, 2026-10-23). CS, MISO and MOSI read HIGH even with the ESP32's own
@@ -44,7 +46,7 @@ before `SD.begin()` and nothing needs enabling in software.
 A sketch that runs on more than one of these boards does **not** need to ask
 [which board it's on](README-board-detection.md) before mounting the card.
 
-What differs between boards is only *around* the slot. On the 3.2", 3.5", 4.0", ESP32-024 and ESP32-035 the
+What differs between boards is only *around* the slot. On the 3.2", 3.5", 4.0", ESP32-024, ESP32-035 and ESP32-2432S032 the
 touch chip shares the display's HSPI bus rather than being bit-banged — which changes
 nothing for the card, since the card is on VSPI. But **GPIO27 is their backlight**, so
 the 2.8"'s "IO27 as the SPI header's chip-select" below does not carry over; what their

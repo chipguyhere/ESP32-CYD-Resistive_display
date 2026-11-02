@@ -126,9 +126,17 @@ text box) or `CYDR_CURSOR_OFF`. It blinks by itself, in the current text color.
 
 The terminal only remembers the line the cursor is on. When `setCursor()` moves to a
 line printed earlier, the terminal reads the pixels under the cursor back from the
-screen, so it can put them back when the cursor blinks off. All six resistive CYDs
-can do this. On a screen that can't, which `readbackAvailable()` reports, the
-cursor hides over that old text and reappears as you print there.
+screen, so it can put them back when the cursor blinks off. Every board can do this
+except the **ESP32-3248S035C**, whose screen can't be read unless its R24 pads are
+bridged ([details](README-board.md)); `readbackAvailable()`
+says whether yours can (and `BoardDetect` shows it). On the 3248S035C, over old text, the
+cursor blinks between the text color and the background color. When it moves on, it
+leaves the background color behind in the space it covered. That rubs out part of
+the old character: the whole cell with the block cursor, only its bottom few rows
+with `CYDR_CURSOR_UNDERLINE`, and a thin strip at its left with `CYDR_CURSOR_BAR`.
+Printing over the cell draws it in full again. To leave old text untouched on that
+board, use the underline or bar cursor, or turn the cursor off
+(`CYDR_CURSOR_OFF`) before you `setCursor()` back.
 
 ## Scrolling
 

@@ -6,6 +6,7 @@
 #include "chipguy_CYD_resistive_touch.h"
 
 #include <Preferences.h>
+#include <Wire.h>
 
 // NVS namespaces + keys for the persisted calibration rectangle, one per
 // wiring + panel size.  The strings predate the cydr_ names and are kept so
@@ -17,6 +18,9 @@
 #define CYDR_TOUCH_NVS_NS_024        "e32024touch"   // shared-touch, 240x320, X/Y swapped (ESP32-024, ST7789)
 #define CYDR_TOUCH_NVS_NS_024_ILI    "e32024itouch"  // shared-touch, 240x320, both axes mirrored (ESP32-024, ILI9341)
 #define CYDR_TOUCH_NVS_NS_035        "e32035touch"   // shared-touch, 320x480, both axes mirrored (ESP32-035)
+#define CYDR_TOUCH_NVS_NS_S032       "e2432s032touch" // shared-touch, 240x320 (ESP32-2432S032)
+#define CYDR_TOUCH_NVS_NS_S032C      "e2432s032ctch"  // GT911; holds only filters (ESP32-2432S032C)
+#define CYDR_TOUCH_NVS_NS_CAP        "ecaptouch"      // other capacitive boards; filters only
 #define CYDR_TOUCH_NVS_XMIN "xmin"
 #define CYDR_TOUCH_NVS_XMAX "xmax"
 #define CYDR_TOUCH_NVS_YMIN "ymin"
@@ -67,13 +71,38 @@ chipguy_CYD_resistive_touch::chipguy_CYD_resistive_touch()
 
 bool chipguy_CYD_resistive_touch::begin(chipguy_CYD_resistive_display &display) {
     _display = &display;
-    return _setup(display.board(), display.panel());
+    return _begin(display.touchBus(), display.panel());
 }
 
 bool chipguy_CYD_resistive_touch::begin() {
-    cydr_board_t b = cydr_activeBoard();
+    cydr_board_t b = cydr_activeTouchBus();
     if (b == CYDR_BOARD_UNKNOWN) b = cydr_detectBoardPassive();
-    return _setup(b, cydr_activePanel());
+    return _begin(b, cydr_activePanel());
+}
+
+// Set up for the board, note what detection chose, then apply any saved
+// axis overrides on top.
+bool chipguy_CYD_resistive_touch::_begin(cydr_board_t board, cydr_panel_t panel) {
+    bool ok = _setup(board, panel);
+    _autoMx = _mirrorX; _autoMy = _mirrorY; _autoSwap = _swapXY;
+    if (ok && _useOverrides) {
+        cydr_overrides_t o;
+        cydr_loadOverrides(o);
+        if (o.touchMirrorX) _mirrorX = o.touchMirrorX == 2;
+        if (o.touchMirrorY) _mirrorY = o.touchMirrorY == 2;
+        if (o.touchSwapXY)  _swapXY  = o.touchSwapXY == 2;
+    }
+    return ok;
+}
+
+void chipguy_CYD_resistive_touch::autoValues(cydr_overrides_t &o) const {
+    o.touchMirrorX = _autoMx ? 2 : 1;
+    o.touchMirrorY = _autoMy ? 2 : 1;
+    o.touchSwapXY  = _autoSwap ? 2 : 1;
+}
+
+void chipguy_CYD_resistive_touch::setAxes(bool mirrorX, bool mirrorY, bool swapXY) {
+    _mirrorX = mirrorX; _mirrorY = mirrorY; _swapXY = swapXY;
 }
 
 bool chipguy_CYD_resistive_touch::_setup(cydr_board_t board, cydr_panel_t panel) {
@@ -90,6 +119,46 @@ bool chipguy_CYD_resistive_touch::_setup(cydr_board_t board, cydr_panel_t panel)
     // XPT2046's PENIRQ drives it high when idle, low when touched.
     pinMode(CYDR_TOUCH_IRQ, INPUT);
     _swapXY = false;
+
+    if (cydr_activeTouchChip() != CYDR_TOUCH_XPT2046) {
+        // GT911 or CST820 on Wire1, reporting the panel's portrait pixels
+        // (the GT911's configured resolution is 240x320 on the 2432S032C;
+        // the CST820 reports 0..239 x 0..319).  No mirroring: both run with
+        // the panel's rows and columns (bench: GT911 2026-10-29, CST820 on
+        // the 2432S024C and JC2432W328 2026-10-31).
+        _nativeW = panel == CYDR_PANEL_ST7796 ? 320 : 240;
+        _nativeH = panel == CYDR_PANEL_ST7796 ? 480 : 320;
+        _mirrorX = false; _mirrorY = false;
+        _nvsNs = cydr_activeModel() == CYDR_MODEL_2432S032C ? CYDR_TOUCH_NVS_NS_S032C
+                                                            : CYDR_TOUCH_NVS_NS_CAP;
+        if (_chip != CYDR_TOUCH_XPT2046) return true;     // begun before
+        cydr_touch_chip_t want = cydr_activeTouchChip();
+        uint8_t addr = cydr_activeTouchAddress();
+        if (!addr) {
+            // A forced model names a chip the display's probe didn't find
+            // at once: look again.
+            if (cydr_probeI2cTouch(&addr) != want) addr = 0;
+        }
+        if (!addr) {
+            Serial.printf("cydr touch: %s not answering on SDA 33 / SCL 32\n",
+                          want == CYDR_TOUCH_GT911 ? "GT911" : "CST820");
+            return false;
+        }
+        _chip = want;
+        _capAddr = addr;
+        Wire1.begin(33, 32, 400000);
+        if (_chip == CYDR_TOUCH_CST820) {
+            // Keep it awake: the CST816 family sleeps after a few seconds
+            // without a touch and then stops answering on I2C until touched.
+            // 0xFE (DisAutoSleep) = 1.
+            cydr_touchI2cLock();
+            Wire1.beginTransmission(_capAddr);
+            Wire1.write(0xFE); Wire1.write(0x01);
+            Wire1.endTransmission();
+            cydr_touchI2cUnlock();
+        }
+        return true;
+    }
 
     if (_board == CYDR_BOARD_SHARED_TOUCH) {
         if (panel == CYDR_PANEL_ST7796 && cydr_activeModel() == CYDR_MODEL_035) {
@@ -122,6 +191,12 @@ bool chipguy_CYD_resistive_touch::_setup(cydr_board_t board, cydr_panel_t panel)
             _swapXY = true;
             _mirrorX = true; _mirrorY = false;
             _nvsNs = CYDR_TOUCH_NVS_NS_024;
+        } else if (cydr_activeModel() == CYDR_MODEL_2432S032) {
+            // ESP32-2432S032: both raw axes run opposite the panel's, as on
+            // the 3.2" (bench, 2026-10-29).
+            _nativeW = 240; _nativeH = 320;
+            _mirrorX = true; _mirrorY = true;
+            _nvsNs = CYDR_TOUCH_NVS_NS_S032;
         } else {
             // 3.2": 240x320 panel on the shared wiring.  Both raw axes run
             // opposite the panel's (bench, 2026-10-13).  Also the guess when
@@ -182,6 +257,7 @@ void chipguy_CYD_resistive_touch::getCalibration(uint16_t &xMin, uint16_t &xMax,
 }
 
 bool chipguy_CYD_resistive_touch::loadCalibration() {
+    if (capacitive()) return false;         // the chip reports pixels
     Preferences prefs;
     if (!prefs.begin(_nvsNs, /*readOnly=*/true)) return false;
     // Treat the calibration as present only if all four keys exist.
@@ -339,28 +415,120 @@ bool chipguy_CYD_resistive_touch::_readRawSample(uint16_t &rawX, uint16_t &rawY)
     return true;
 }
 
+// GT911 registers: 0x814E status (bit 7 = new data, low nibble = points),
+// 0x8150 first point (X lo/hi, Y lo/hi, size lo/hi).  The status must be
+// cleared after each read.  Between reports the last state is held, so a
+// press doesn't flicker between the controller's ~100 Hz updates.
+bool chipguy_CYD_resistive_touch::_gtReg(uint16_t reg, uint8_t *buf, int n) {
+    cydr_touchI2cLock();      // the transfer, start to stop: see cydr_touchI2cLock()
+    bool ok = _gtRegLocked(reg, buf, n);
+    cydr_touchI2cUnlock();
+    return ok;
+}
+
+bool chipguy_CYD_resistive_touch::_gtRegLocked(uint16_t reg, uint8_t *buf, int n) {
+    Wire1.beginTransmission(_capAddr);
+    Wire1.write(reg >> 8);
+    Wire1.write(reg & 0xFF);
+    if (Wire1.endTransmission(false) != 0) return false;
+    if (Wire1.requestFrom((int)_capAddr, n) != n) return false;
+    for (int i = 0; i < n; i++) buf[i] = Wire1.read();
+    return true;
+}
+
+bool chipguy_CYD_resistive_touch::_gt911Read(uint16_t &rawX, uint16_t &rawY) {
+    uint8_t st;
+    if (_gtReg(0x814E, &st, 1) && (st & 0x80)) {
+        uint8_t p[6];
+        _gtDown = (st & 0x0F) > 0 && _gtReg(0x8150, p, 6);
+        if (_gtDown) {
+            _gtX = p[0] | p[1] << 8;
+            _gtY = p[2] | p[3] << 8;
+            _lastPressure = p[4] | p[5] << 8;
+        }
+        cydr_touchI2cLock();
+        Wire1.beginTransmission(_capAddr);
+        Wire1.write(0x81); Wire1.write(0x4E); Wire1.write(0);
+        Wire1.endTransmission();
+        cydr_touchI2cUnlock();
+    }
+    rawX = _swapXY ? _gtY : _gtX;
+    rawY = _swapXY ? _gtX : _gtY;
+    return _gtDown;
+}
+
+// CST820 (CST816 family) registers, one-byte addressed: 0x02 finger count,
+// 0x03 X high nibble (bits 7..6 the event), 0x04 X low, 0x05 Y high nibble,
+// 0x06 Y low.  Read on every poll; no status to clear.  A failed read keeps
+// the last state, as the GT911 path does between reports.
+bool chipguy_CYD_resistive_touch::_cstReg(uint8_t reg, uint8_t *buf, int n) {
+    cydr_touchI2cLock();      // the transfer, start to stop: see cydr_touchI2cLock()
+    bool ok = _cstRegLocked(reg, buf, n);
+    cydr_touchI2cUnlock();
+    return ok;
+}
+
+bool chipguy_CYD_resistive_touch::_cstRegLocked(uint8_t reg, uint8_t *buf, int n) {
+    Wire1.beginTransmission(_capAddr);
+    Wire1.write(reg);
+    if (Wire1.endTransmission(false) != 0) return false;
+    if (Wire1.requestFrom((int)_capAddr, n) != n) return false;
+    for (int i = 0; i < n; i++) buf[i] = Wire1.read();
+    return true;
+}
+
+bool chipguy_CYD_resistive_touch::_cst820Read(uint16_t &rawX, uint16_t &rawY) {
+    uint8_t p[5];
+    if (_cstReg(0x02, p, 5)) {
+        _gtDown = (p[0] & 0x0F) > 0;
+        if (_gtDown) {
+            _gtX = (uint16_t)(p[1] & 0x0F) << 8 | p[2];
+            _gtY = (uint16_t)(p[3] & 0x0F) << 8 | p[4];
+        }
+        _lastPressure = 0;
+    }
+    rawX = _swapXY ? _gtY : _gtX;
+    rawY = _swapXY ? _gtX : _gtY;
+    return _gtDown;
+}
+
+const char *chipguy_CYD_resistive_touch::chipName() const {
+    switch (_chip) {
+        case CYDR_TOUCH_GT911:  return "GT911";
+        case CYDR_TOUCH_CST820: return "CST820";
+        default:                return "XPT2046";
+    }
+}
+
 bool chipguy_CYD_resistive_touch::readRaw(uint16_t &rawX, uint16_t &rawY) {
+    if (_chip == CYDR_TOUCH_GT911)  return _gt911Read(rawX, rawY);
+    if (_chip == CYDR_TOUCH_CST820) return _cst820Read(rawX, rawY);
     return _readRawSample(rawX, rawY);
 }
 
 bool chipguy_CYD_resistive_touch::read(uint16_t &x, uint16_t &y) {
     uint16_t rawX, rawY;
-    if (!_readRawSample(rawX, rawY)) {
+    if (!readRaw(rawX, rawY)) {
         _hasLast = false;       // released: forget the last point for jump filter
         _jumpCount = 0;
         return false;
     }
 
-    // Pressure filter: reject touches lighter than the configured threshold.
-    if (_minPressure > 0 && _lastPressure < _minPressure) return false;
-
     const long W = _nativeW - 1;    // 239 or 319
     const long H = _nativeH - 1;    // 319 or 479
-
-    // Clamp to the calibration rectangle, then map to physical pixels
-    // (before rotation).
-    long px = map((long)constrain(rawX, _xMin, _xMax), _xMin, _xMax, 0, W);
-    long py = map((long)constrain(rawY, _yMin, _yMax), _yMin, _yMax, 0, H);
+    long px, py;
+    if (capacitive()) {
+        // Already in panel pixels.
+        px = constrain((long)rawX, 0L, W);
+        py = constrain((long)rawY, 0L, H);
+    } else {
+        // Pressure filter: reject touches lighter than the configured threshold.
+        if (_minPressure > 0 && _lastPressure < _minPressure) return false;
+        // Clamp to the calibration rectangle, then map to physical pixels
+        // (before rotation).
+        px = map((long)constrain(rawX, _xMin, _xMax), _xMin, _xMax, 0, W);
+        py = map((long)constrain(rawY, _yMin, _yMax), _yMin, _yMax, 0, H);
+    }
 
     // Mirror whichever raw axis runs opposite the panel on this board.  (Done
     // in physical space so every rotation inherits the correction.)

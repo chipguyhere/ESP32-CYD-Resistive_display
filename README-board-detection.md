@@ -9,6 +9,9 @@ the sketch can ask for each one afterwards. Together they name the board:
 | How is the board wired? | `display.board()` | `CYDR_BOARD_OWN_TOUCH` or `CYDR_BOARD_SHARED_TOUCH` |
 | Which screen chip, what size? | `display.panel()`, `display.panelName()`, `display.nativeWidth()` / `nativeHeight()` | ILI9341 / ST7789 (240×320) or ST7796 (320×480) |
 | Which pin is the red LED on? | `display.redLedPin()` (or `cydr_redLedPin()`) | `4` or `22` |
+| Which touch chip? | `display.touchChip()`, `lv_setup.touch().chipName()` / `capacitive()` | XPT2046 (resistive), GT911 (the 2432S032C and 3248S035C) or CST820 (the 2432S024C and JC2432W328) |
+| How big is the screen? | `display.diagonalTenths()` | 24, 28, 32, 35 or 40; 0 for the 32E 3.5" / 4.0" unless the [size override](README-overrides.md) names it |
+| Can the screen be read back? | `display.readback()`, `display.readbackName()` | on GPIO12 (most boards), on shared GPIO13 (the 2432S032 / C) or unavailable (the 3248S035C) |
 | …and green and blue? | `display.greenLedPin()`, `display.blueLedPin()` (or `cydr_greenLedPin()`, `cydr_blueLedPin()`) | `16` / `17`, or `17` / `16` on the ESP32-024 and ESP32-035 |
 | So which board is it? | `display.model()`, `display.modelName()` (or `cydr_activeModel()`) | one of the rows below |
 
@@ -20,12 +23,24 @@ the sketch can ask for each one afterwards. Together they name the board:
 | ESP32-32E 3.5" / 4.0" | `CYDR_MODEL_32E_35_40` | shared touch | ST7796, 320×480 | **22** | speaker amplifier enable |
 | ESP32-024 2.4" | `CYDR_MODEL_024` | shared touch | ST7789 or ILI9341, 240×320 | **4** | the red LED |
 | ESP32-035 3.5" | `CYDR_MODEL_035` | shared touch | ST7796, 320×480 | **4** | the red LED |
+| ESP32-2432S032 | `CYDR_MODEL_2432S032` | shared touch | ST7789, 240×320 | **4** | the red LED |
+| ESP32-2432S032C | `CYDR_MODEL_2432S032C` | GT911 touch on I²C, backlight 27 | ST7789, 240×320 | **4** | the red LED |
+| ESP32-2432S024C | `CYDR_MODEL_2432S024C` | CST820 touch on I²C, backlight 27 | ILI9341, 240×320 | **4** | the red LED |
+| Guition JC2432W328 | `CYDR_MODEL_JC2432W328` | CST820 touch on I²C, backlight 27 | ST7789, 240×320 | **4** | the red LED |
+| ESP32-3248S035C | `CYDR_MODEL_3248S035C` | GT911 touch on I²C, backlight 27 | ST7796, 320×480 | **4** (vendor pinout; **TODO (bench)**) | the red LED |
+
+The size override in `TouchCalibrate` can say which of the 3.5" and 4.0" a board is.
+The model override can name any board outright
+([README-overrides.md](README-overrides.md)).
 
 Three pairs of boards look alike to the first two checks: the 2432S028 and the 32E 2.8"
 (same wiring and panels), the 32E 3.2" and the ESP32-024, and the 32E 3.5" / 4.0" and
 the ESP32-035 (same wiring, same panel). The red-LED check splits all three, so every
 board in the table gets its own answer. The 3.5" and 4.0" are built alike and can't be
-told apart; neither needs to be. `model()` is `CYDR_MODEL_UNKNOWN` only when GPIO4
+told apart; neither needs to be. The 2432S032 is recognised by its screen alone (see
+[Panel](#panel-asked-by-its-id)), and the 2432S032C, 2432S024C, JC2432W328 and
+3248S035C by their touch chips answering on I²C (see [Capacitive boards](#capacitive-boards)).
+`model()` is `CYDR_MODEL_UNKNOWN` only when GPIO4
 couldn't be measured (WiFi was already on) on a 240×320 board; a 320×480 board is then
 taken for a 32E 3.5" / 4.0".
 
@@ -62,7 +77,16 @@ Nothing is driven, so this is safe on every board. Pin details in
 
 The display's data-out pin is GPIO12 on every board, and the library asks the panel
 for its ID there. The ILI9341 and ST7796 answer their own ID questions, the ST7789
-answers a different one. The panel alone sets the screen size. If no ID is
+answers a different one. The panel alone sets the screen size.
+
+The ESP32-2432S032's panel has **no wire to GPIO12** — it only listens — so nothing
+answers there. When nothing at all comes back on GPIO12, the library asks all the same
+questions again and listens on the panel's data-in line, GPIO13, which these panels can
+also answer on. An ST7789 answering there on shared-touch wiring is a 2432S032 (or
+2432S032C). Any other panel answering there — an ILI9341 or ST7796, or an ST7789 whose
+wiring couldn't be told — is a board no one has seen yet: the library sets that panel up
+(so the screen is the right size), leaves `model()` unknown, and says so on Serial. An
+ST7789 on own-touch wiring is the known 2.8" panel and is named as before. If no ID is
 recognised, the library prints the bytes on Serial and guesses from the wiring
 (ST7796 on shared touch, ILI9341 on own touch); `display.setPanel()` before
 `begin()` skips detection. [Details](README-board.md#screen-variants).
@@ -111,6 +135,8 @@ Rules:
 - **It leaves GPIO4 as it found it** — an input with no pull — and gives the ADC back.
   On the 32E boards the board's own pull-up keeps the amplifier off; on the 2432S028,
   the ESP32-024 and the ESP32-035 the LED stays dark.
+- **On the 2432S032 GPIO4 isn't measured**: the screen has already named the board,
+  and its schematic puts the red LED on GPIO4.
 - **If GPIO4 can't be measured**, `model()` is unknown and a shared-touch 240×320
   board is set up as a 3.2" — so on an ESP32-024 the colors come out inverted and touch
   runs sideways — and a 320×480 one as a 32E 3.5" / 4.0", so on an ESP32-035 touch
@@ -119,12 +145,34 @@ Rules:
 - `cydr_redLedProbeMillivolts()` returns the reading behind the answer (0 when none
   was taken), for a sketch that wants to log it.
 
-## Capacitive boards fool these checks
+## When detection is wrong
 
-This library is for **resistive** touch (the XPT2046) only. A capacitive CYD such as
-the **ESP32-2432S032C** (GT911 touch on I²C) has the same GPIO27 backlight resistor as
-the shared-touch boards, so `begin()` calls it shared touch. On the unit probed
-(2026-10-13) the red LED is on GPIO4 (1620 mV), which the library now reports
-correctly, but its panel didn't answer an ID read on GPIO12 — so the library guesses
-ST7796 (320×480) and names it a 3.5" / 4.0" — and touch doesn't work. Use a
-capacitive-touch library for those.
+A board variant that detection gets wrong can be corrected without changing any code:
+`TouchCalibrate` saves **overrides** for this board, and `begin()` applies them. What
+follows from the answers above — color order, inversion, mirroring, touch axes, the LED
+and backlight pins, what GPIO34 carries — can be overridden that way, and so can the
+panel type when the panel didn't identify itself (never when it did). See [README-overrides.md](README-overrides.md).
+
+## Capacitive boards
+
+On every board, `begin()` checks for a capacitive touch chip on I²C (SDA 33, SCL 32). It
+looks for a **CST820** at address `0x15`, then a **GT911** at `0x5D` or `0x14`. If one
+answers, the touch driver uses it on **`Wire1`** and leaves `Wire` for the sketch. The
+chip reports screen pixels, so there is nothing to calibrate: `loadCalibration()`
+returns `false`, `capacitive()` returns `true`, and `TouchCalibrate` goes straight to
+its drawing test. Both chips are polled. Their reset line (GPIO25) and interrupt line
+are left alone.
+
+| Board | Touch chip | How it's named |
+|---|---|---|
+| ESP32-2432S032C | GT911 | Its screen names the 2432S032 PCB (see [Panel](#panel-asked-by-its-id)). The GT911 then marks it as the C. Checked on one unit, 2026-10-29. |
+| ESP32-2432S024C | CST820 (chip ID `0xB7`) | CST820 with an ILI9341. GPIO21 is the touch chip's interrupt line, so the backlight-pin check comes out inconclusive. When a capacitive chip answers, the backlight is then taken to be GPIO27. Checked on one unit, 2026-10-31. |
+| ESP32-3248S035C | GT911 at `0x5D` | GT911 on shared-touch wiring with an ST7796 — or with a panel that answers no ID, which is then taken for an ST7796, as this board's is. GPIO4 isn't measured: it only follows the internal pulls here. Checked on one unit, 2026-11-02. |
+| Guition JC2432W328 | CST820 (chip ID `0xB7`) | CST820 with an ST7789 on shared-touch wiring. The wiring and red-LED reading are an ESP32-024's; the CST820 tells them apart. Inversion stays off, as on the ST7789 ESP32-024. Checked on one unit, 2026-10-31. |
+
+Touch follows the finger on both CST820 boards with no mirroring or swap, as on the
+GT911. The RGB LED is red / green / blue on GPIO4 / 16 / 17 on both (bench, 2026-10-31).
+
+A capacitive chip on some other board is still driven, but `model()` is
+`CYDR_MODEL_UNKNOWN` and Serial says so. If detection names the wrong board, the
+[model override](README-overrides.md) in `TouchCalibrate` can name the right one.

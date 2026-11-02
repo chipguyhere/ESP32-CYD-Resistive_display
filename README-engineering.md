@@ -13,7 +13,8 @@ The power, sound and card-slot sections are the **ESP32-32E 2.8"**'s, the board 
 schematic was read. The other boards appear where the bench has said something about
 them: [board wiring](#two-wirings-and-how-begin-tells-them-apart), the
 [3.2" panel](#the-32-panel), [GPIO4](#telling-gpio4s-two-jobs-apart), and the
-[ESP32-024](#the-esp32-024), and the ESP32-035's [light sensor](#light-sensor).
+[ESP32-024](#the-esp32-024), the [ESP32-2432S032](#the-esp32-2432s032), and the
+ESP32-035's [light sensor](#light-sensor).
 
 **Sources.** This board's schematic as read for these notes; part datasheets (TP4054,
 ME6217, SL2305 / SI2305, B5819W, SC8002B / LM4871, CH340C, XPT2046, ILI9341, ST7789); the ESP32
@@ -67,7 +68,8 @@ re-measured on the 2432S028, 3.2" and 4.0" through the library's own probe — 1
 | ESP32-2432S028 (red LED) | 3.14 V | 1.63 V | 2.47 V |
 | ESP32-024 (red LED; 2026-10-18) | 3.12 V | 1.60 V | 2.13 V |
 | ESP32-035 (red LED; 2026-10-23) | 3.16 V | 1.58 V | — |
-| ESP32-2432S032C (red LED; capacitive, not supported) | — | 1.62 V | — |
+| ESP32-2432S032C (red LED; 2026-10-13, again 2026-10-29) | 3.14 V | 1.62 V | 2.48 V |
+| ESP32-2432S032 (LED dark on this unit; 2026-10-29) | 3.10 V | 0.13 V | 2.74 V |
 
 Both boards pull GPIO4 *up*; what differs is the element doing it.
 
@@ -100,10 +102,8 @@ restores the pin to a floating input, and calls `perimanClearPinBus(4)` so the A
 oneshot unit is deleted before WiFi starts. The result is latched; `display.begin()`
 makes the first call right after board detection. A failed ADC2 read (WiFi already
 running) comes back as 0, so anything under 500 mV is treated as "no reading" and
-returns -1 without latching. The measurement runs on every wiring. It used to be
-skipped on shared-touch boards, on the reasoning that the 2432S028 was the only
-red-LED-on-GPIO4 board and it has own-touch wiring; the ESP32-024 broke that, as a
-shared-touch board with the red LED on GPIO4.
+returns -1 without latching. The measurement runs on every wiring: the ESP32-024 and
+ESP32-035 are shared-touch boards with the red LED on GPIO4.
 
 ### Two wirings, and how `begin()` tells them apart
 
@@ -122,31 +122,79 @@ the backlight driver's pull-down overpowers it and the pin reads 0.13 V. Exactly
 LOW decides the wiring; neither or both is `UNKNOWN`, and `begin()` then guesses from
 the panel (ST7796 → shared, else own) and says so on Serial.
 
-The library used to infer the wiring *from* the panel (ST7796 ⇒ 320×480 ⇒ shared). The
-3.2" broke that: a probe on 2026-10-13 found GPIO27 pulled down and GPIO21 floating, an
-XPT2046 answering on the display bus (temperature channel T0 = 725, `Y` = 4095 with no
-touch) and nothing on 25 / 32 / 39 — the shared wiring — behind a 240×320 ST7789. Since
-then wiring comes from the pull-downs and geometry from the panel, independently. The
-same probe showed GPIO25, 32 and 33 held HIGH under the internal pull-down on the 3.2"
+Wiring and geometry are independent: the 3.2" has the shared wiring (GPIO27 pulled
+down, GPIO21 floating, an XPT2046 answering on the display bus — temperature channel
+T0 = 725, `Y` = 4095 with no touch — and nothing on 25 / 32 / 39) behind a 240×320
+ST7789 (probe, 2026-10-13). So wiring comes from the pull-downs and geometry from the
+panel. The same probe showed GPIO25, 32 and 33 held HIGH under the internal pull-down on the 3.2"
 (external pull-ups; 33 is the touch CS, 25 and 32 unexplained — **TODO (bench)**), and
 GPIO34 at 2.10 V on USB, as on the 32E 2.8" with no cell.
 
 The touch calibration lives in one NVS namespace per wiring + panel size, so a sketch
 moved between boards doesn't carry the wrong rectangle: `e32e28touch` (own touch),
-`e32e32touch` (shared, 240×320), `e32024touch` (the ST7789 ESP32-024, whose axes are
+`e32e32touch` (shared, 240×320), `e2432s032touch` (the 2432S032, both axes mirrored),
+`e2432s032ctch` (the 2432S032C's GT911 — only the filter settings could ever land
+there), `ecaptouch` (every other capacitive board, likewise), `e32024touch` (the ST7789 ESP32-024, whose axes are
 swapped), `e32024itouch` (the ILI9341 ESP32-024, both axes mirrored), `e32035touch` (the ESP32-035, both axes mirrored where the 32E 3.5" mirrors
 only Y), `e32etouch` (shared, 320×480 — also the earlier
 `chipguy_ESP32-32E_CYD_4inch_display`'s). The names predate the `cydr_` prefix and
 were kept so saved calibrations survive the rename.
 
-**A capacitive board looks like a shared-touch one.** The ESP32-2432S032C probed on
-2026-10-13 has the GPIO27 pull-down (GPIO21 floats), so it reads as shared touch. Its
-panel left GPIO12 following the pull on every ID read (index `FF FF / 00 00`, `0xD3`
-and RDDID `FF FF FF`), so detection fell back to ST7796. No XPT2046 answered on either
-bus; a GT911 answered at I²C `0x5D` on SDA 33 / SCL 32 (product ID `911`, firmware
-`0x1060`), with GPIO21 and 25 also externally pulled up (likely its INT and RST).
-GPIO34 read 0.14 V (light sensor, as on the 2432S028), GPIO4 1.62 V (red LED). Out of
-scope for this library; recorded so nobody mistakes the misdetection for a bug.
+**A capacitive board looks like a shared-touch one.** The capacitive boards have the
+GPIO27 pull-down, so they read as shared touch; the touch chip on I²C is what sets
+them apart. The ESP32-2432S032C's GT911 answers at `0x5D` on SDA 33 / SCL 32 (product
+ID `911`, firmware `0x1060`), with GPIO21 and 25 also pulled up (21 by R18 — its INT
+isn't connected, see below — and 25 the GT911's RST); see
+[The ESP32-2432S032](#the-esp32-2432s032).
+
+**Where the capacitive touch chip sits.** On these boards the GT911 or CST820 is
+mounted on the touch panel's flex cable, which plugs into a connector on the main
+PCB. A board has a capacitive chip only when a capacitive panel is fitted: there is
+no place on the PCB for an unused one. The XPT2046, by contrast, is on the main PCB,
+and a capacitive board may still carry one (the ESP32-3248S035C does), wired as on
+the resistive version: CS on GPIO33, which is the capacitive chip's SDA, and DOUT on
+GPIO12. See [Readback](#readback) for what that costs.
+
+### The CST820 boards
+
+Two capacitive boards, one unit each, probed 2026-10-31: an **ESP32-2432S024C** (MAC
+`…E7:0F:D0`, "ESP32-2432S024" on the PCB) and a **Guition JC2432W328** (MAC
+`…85:A6:B4`).
+
+**The touch chip.** An I²C scan of SDA 33 / SCL 32 found one device on each, at `0x15`.
+Register `0xA7` (chip ID) reads `0xB7`, `0xA9` reads `0x01` and `0xAA` reads `0xFF`.
+`0xA8` (project ID) reads `0x84` on the 2432S024C and `0x32` on the JC2432W328. `0xB7`
+is the ID that common CST816-family drivers give for the CST820. The driver reads
+registers `0x02`–`0x06` (finger count, then X and Y, 12 bits each). At begin it writes
+`0xFE` = 1 (DisAutoSleep). Otherwise a CST816-family chip sleeps after a few seconds
+untouched and stops answering on I²C. The chip answered with GPIO25 (its likely RST)
+left floating. Neither board needs a reset pulse, so the driver never drives 25.
+Coordinates come out in the panel's portrait pixels, with no mirror or swap.
+
+**Why the 2432S024C's backlight check was inconclusive.** The ESP32-024's schematic
+(titled *ESP32-2432S024*) draws a capacitive option: CTP_INT on GPIO21 (via R25), RST on
+25, SCL on 32, SDA on 33. A 2432S024C with that wiring has the CST820's INT output on
+GPIO21. GPIO21 is then driven, not merely pulled, so the pull-up test can't see the
+backlight pull-down there. So when either check is inconclusive and a capacitive chip
+answers, `begin()` takes GPIO27 as the backlight. The screen lit with that answer. Its
+RGB LED is red / green / blue on 4 / 16 / 17, not the ESP32-024's 4 / 17 / 16. So
+despite the shared schematic title, it isn't the ESP32-024's PCB with the LED as drawn
+there (bench, 2026-10-31).
+
+**The JC2432W328** reads as shared-touch (GPIO27 pull-down) with an ST7789 that answers
+on GPIO12, and GPIO4 reads as the red LED: to those checks it is an ESP32-024, and only
+the CST820 tells them apart. Its picture is right with the ESP32-024's settings
+(INVOFF).
+
+**R24.** Both boards have a 0 Ω part at R24, in the same group of parts as the
+ESP32-2432S032's empty R24 but slightly moved. On the ESP32-024 and the 2432S032, R24 is
+the 0 Ω link from the panel's SDO to GPIO12 (schematic). Both panels here answered their
+ID reads on GPIO12, so it fits the same role here (inferred from the ID reads, not from a
+schematic). That is the visible difference from the 2432S032 PCB, whose panel can only
+be read back on SDA.
+
+**NVS.** Both boards share the touch namespace `ecaptouch`. Only the filter settings
+could ever land there, since capacitive touch has no calibration.
 
 ### The ESP32-024
 
@@ -252,6 +300,146 @@ on its input.
 on 34 / 35 / 39 for 45 s, three SW1 presses changed nothing; two BOOT presses showed on
 GPIO0. That agrees with the schematic.
 
+### The ESP32-2432S032
+
+A 3.2" ST7789 board sold as ESP32-2432S032 (resistive, XPT2046) and ESP32-2432S032C
+(capacitive, GT911) on the same PCB.
+
+**Sources.** Two schematic sheets, *ESP32-2432S032-MCU-V1.0.jpg* and
+*ESP32-2432S032-LCM-V1.0.jpg* (title block "ESP32-2432S032", 2023-02-03,
+深圳市晶彩智能有限公司), read by eye; not redistributed here. Probe sketches on one
+resistive unit (MAC `…8DBC9C`) and one C (MAC `…6BE0B0`), 2026-10-29. Both boards
+gave identical pin readings apart from GPIO4 and the I²C bus.
+
+**What the sheets show.** The ESP32-024's layout, nearly part for part:
+- **Panel**: SDI/SDA (LCD pin 13) on IO13; SDO (pin 14) reaches IO12 only through R24,
+  0 Ω, which is **not fitted** on either unit. SPI4W and IM2 are pulled to 3.3 V by
+  R26 / R27 (10 kΩ). `TFT_RST` is EN.
+- **Backlight**: GPIO27 drives AO3402 Q2 with a 10 kΩ pull-down R10; R11 is 3.9 Ω.
+- **Touch**: the XPT2046 on the display bus (DCLK IO14, DIN IO13, DOUT IO12, CS IO33,
+  PENIRQ IO36), and the capacitive FPC on IO21 (CTP_INT, via R25, 0 Ω), IO25 (RST),
+  IO32 (SCL) and IO33 (SDA), with 4.7 kΩ pull-ups R22 / R23. **R25 is not fitted on
+  either unit**, so the GT911's INT reaches nothing and IO21 is free for CN1 / P3 on
+  both boards (seen 2026-10-29). Scanning SDA 21 / SCL 22 found no device on either
+  board, and SDA 33 / SCL 32 only the C's GT911 at `0x5D`.
+- **RGB LED**: an MHP5050RGBDT, anodes to 3.3 V through 1 kΩ each, cathodes on IO17,
+  IO4 and IO16. Which color is on which pin isn't printed; the C showed red on 4, green
+  on 16, blue on 17.
+- **Amplifier** on IO26, its SHUTDOWN pin tied to GND: always on.
+- **Light sensor**: a GT36516 LDR across the lower half of a 1 MΩ / 1 MΩ divider on IO34.
+- **Power**: a charger / booster U8 with a power key SW1 and the battery on a JST 1.25
+  connector; no battery reading. The part number isn't printed. **TODO (bench):** which
+  chip, and whether SW1 behaves as the FM5324GA's on the ESP32-024.
+- **CN1** 3.3V / IO21 (R18 10 kΩ pull-up) / IO22 / GND; **P3** IO21 / IO22 / IO35 / GND.
+
+**Reading the panel without SDO.** With R24 out, every read on GPIO12 just shows the
+internal pull: index `FF FF / 00 00`, `0xD3` and RDDID `FF FF FF` (pull-up) and `00 …`
+(pull-down). Turning MOSI around after the command byte, with a dummy clock as
+for any multi-byte ST7789 read, gives RDDID `85 85 52` on GPIO13 under both pulls —
+the datasheet's default ID — and `0xDA`/`0xDB`/`0xDC` `85` / `85` / `52`, RDDST
+`80 63 00 00`. So the ST7789 drives its SDA during reads in this interface mode
+(serial interface I, SDA bidirectional; on its IM pins see above). `_detectPanel()`
+repeats the whole ID set — ILI9341 index reads, `0xD3`, RDDID — on SDA whenever every
+GPIO12 byte followed the pull, so any of the three controllers would be recognised
+there. A shared-touch ST7789 names the 2432S032; anything else found only on SDA is
+reported as an unseen variant with the model unknown. The "silent 2.8" ST7789"
+rule (own-touch wiring, index reads following the pull) is decided by the index reads
+alone. The other boards' panels answer on GPIO12, which suggests interface II
+(separate SDO); whether they'd also answer on SDA is **TODO (bench)**, and doesn't
+matter to detection.
+
+**GPIO4 on the resistive unit** read 0.13 V with the internal pull-down, against
+1.62 V on the C, and none of the three LED pins lit anything when driven LOW. With the
+LED's diode in place the pull-down settles near 1.6 V, so the red chip, at least, is
+open or missing on that unit; it is taken as a unit defect, not a design difference.
+The voltage test would call that a failed ADC read, which is why the 2432S032's red
+LED pin is taken from the schematic instead.
+
+**GPIO4's reset pull-down.** GPIO4 comes out of reset with its internal pull-down on
+(`gpio_dump_io_configuration` before `begin()`: `Pullup: 0, Pulldown: 1`). On a board
+with the red LED there, that is ~1.6 V / 45 kΩ ≈ 36 µA through the LED — a visible
+dim glow, seen on the 2432S032C. The voltage test clears the pull when it finishes, so
+the other red-on-GPIO4 boards never showed it; on the 2432S032 the test is skipped, so
+`begin()` clears the pull itself.
+
+**Unfitted parts.** On both units R24 (SDO to IO12, above), R25 (CTP_INT to IO21) and
+C18–C21 are empty. C18–C21 are the 1 nF filter capacitors from the XPT2046's X+, Y+,
+X− and Y− inputs to ground; the resistive board reads touch without them, and
+`TouchCalibrate` accepted its first fit (xMin 223, xMax 3888, yMin 313, yMax 3918).
+Whether its raw samples are noisier than they would be with the capacitors is
+unmeasured — **TODO (bench)**: compare raw spread with and without them on a bare
+film. If touch on one of these ever seems jumpy, four 1 nF parts there are the first
+thing to try. On the C the whole XPT2046 footprint is empty.
+
+**Touch.** Resistive: both raw axes mirrored, as on the 3.2" (drawing checked,
+2026-10-29). Capacitive: the GT911's configuration (version `70`) is 240 × 320, and a
+tap on each corner square read about (16–29, 25–32) and (222, 302) in panel pixels —
+no swap or mirror needed. `cydr_gt911Address()` probes `0x5D`, then `0x14`, on SDA 33 /
+SCL 32 at 400 kHz. On the resistive board that toggles the XPT2046's CS with its clock
+idle, which the chip ignores. The GT911 is never reset (RST on IO25 is left alone,
+and its INT isn't wired), so its address is whatever it took at power-up. The driver polls status
+`0x814E` (bit 7 = new report, low nibble = points), reads point 1 at `0x8150`, clears
+the status, and holds the last state between reports.
+
+**SW1 and the IP5306.** Both units carry an IP5306 (resistive: marked `7021.1HA`; C:
+`8067.1HW`). Turning off took two quick presses on the resistive unit and a
+10-second hold on the C, the other gesture doing nothing on each (2026-10-29). Nothing
+on the schematic differs around the key, so the likeliest explanation is two IP5306
+variants with different key behavior; whether the marking suffix identifies them is
+unconfirmed.
+
+### The ESP32-3248S035C
+
+A 3.5" capacitive board sold as ESP32-3248S035C, micro-USB only. One unit (MAC
+`…8D:F8:B0`), probe sketches, 2026-11-02. No schematic in hand.
+
+**The panel can't be read as shipped.** R24, the vendor schematic's 0 Ω link from the
+panel's SDO to IO12, is not fitted, and the ST7796 doesn't drive SDA in its 4-line
+mode the way the 2432S032's ST7789 does. Every ID read returns the read pin's pull on
+both GPIO12 and GPIO13. GPIO27 reads as the backlight pull-down, so `_detectPanel()`
+takes its shared-touch guess, ST7796, which is right, and prints "unrecognised panel …
+assuming ST7796" on every boot. The 32E 3.5"'s ST7796 settings give a correct picture.
+With R24 bridged the panel answers `0xD3` (`00 77 96`) on GPIO12 and reads back there
+(one unit, 2026-11-02).
+
+**How it is named.** GT911 at `0x5D` + ST7796 + shared-touch wiring, whether the
+ST7796 was identified (R24 bridged) or guessed. The 2432S032C's GT911 comes with an
+ST7789 that answers on SDA, so the two can't be confused.
+
+**Two touch chips.** The board carries a GT911 *and* an XPT2046 (seen on the PCB). With
+CS on GPIO33 and the display bus (13 / 14 / 12), the XPT2046 converts: TEMP0 read 732
+counts under both MISO pulls, while X / Y / Z1 / Z2 followed the pull (no film
+attached) and VBAT read 0. So this is the resistive ESP32-3248S035R's PCB with a capacitive panel (its
+GT911 on the panel's flex cable) in place of the resistive one, and the XPT2046 left
+fitted. GPIO33 is also the GT911's SDA, so every I²C transfer selects the XPT2046.
+During a pixel write that is harmless: its DOUT drives GPIO12, which nothing reads
+then. During a readback on GPIO12 it could fight the panel, which the
+[touch lock](#readback) prevents. The library's XPT2046 path must never run on this
+board: a model override naming a resistive board would make the touch driver clock
+GPIO33 as SPI chip select and leave the GT911's SDA in that state.
+
+**Pins, with the internal pulls** (digital level up / down; ADC mV float / down / up):
+
+| GPIO | Reads | Taken to be |
+|---|---|---|
+| 4 | 1 / 0; 2056 / 128 / 3122 mV | follows the pulls — no LED current path seen (see below) |
+| 16, 17, 22 | 1 / 0 | follow the pulls |
+| 21 | 1 / 1 | pulled up — the GT911's INT, as on the 2432S032 schematic's option, or a pull-up |
+| 25 | 1 / 1; 3122 / 2539 / 3122 mV | pulled up — the GT911's RST (inferred) |
+| 26 | 1 / 0; 1334 / 306 / 2839 mV | the amplifier's input network, as on the other boards (inferred) |
+| 27 | 0 / 0; 128 / 128 / 742 mV | the backlight's pull-down |
+| 32, 33 | 1 / 1 | I²C pull-ups (GT911 SCL / SDA) |
+| 34 | 142 mV | the light sensor's room-light floor, as on the other photoresistor boards |
+| 35, 39 | 142 / 142–188 mV | no pull, nothing driving |
+| 36 | 3134 mV | pulled high — on the resistive boards the XPT2046's PENIRQ, which idles high |
+| 0, 5, 19, 23 | 1 / 1 | pulled up (BOOT; card-slot CS / MISO / MOSI) |
+
+**The RGB LED.** One is fitted, but driving GPIO 4, 16, 17, 22, 5, 18, 19 and 23 LOW
+and then HIGH lit nothing. GPIO4's 128 mV under the pull-down matches the dead-LED
+2432S032 unit, not the ~1.6 V an LED to 3.3 V gives. So this LED has no supply path,
+either from an unfitted resistor or a fault. The model reports the vendor's 4 / 16 / 17,
+as it does for the 2432S032. **TODO (bench):** a second unit.
+
 ### Light sensor
 
 The 2432S028, the ESP32-024 and the ESP32-035 have a photoresistor on GPIO34. On the ESP32-024's
@@ -300,7 +488,8 @@ and don't. The fix, for anyone inclined, is cutting the CC1–CC2 link and addin
 ### The 3.2" panel
 
 An ST7789 at 240×320 that answers RDDID (so detection recognises it on shared-touch
-wiring, where a silent panel would be taken for an ST7796). Same MADCTL as the 2.8"
+wiring, where a silent panel would be taken for an ST7796). The ESP32-2432S032's
+panel behaves the same once identified ([how](#the-esp32-2432s032)). Same MADCTL as the 2.8"
 ST7789, but it needs **INVON** (`0x21`): with the 2.8"'s INVOFF it showed inverse video
 (white background, cyan where red belonged; observed 2026-10-13). `_initST7789()` picks
 INVON on shared-touch wiring, INVOFF on own-touch. Touch runs opposite the panel on
@@ -323,28 +512,20 @@ read directly is undriven. The `0xD9` index trick (write `0x10+n`, then read one
 `0xD3`) returns `41 00 93 41` for n = 0..3. RDDID `0x04` and RDID1–3 `0xDA`–`0xDC`
 return `00`: no module ID is programmed.
 
-**ST7789 board.** On 2026-10-10 every read came back `FF` under pull-up and `00` under
-pull-down, which was taken to mean SDO is not wired to GPIO12. **That was wrong.** A
-bit-banged re-probe on 2026-10-11 (the one `begin()` uses, about 200 kHz, CS held across
-command and reply) shows the panel does drive GPIO12. RDDID `0x04` returned `81 81 B3`, and
+**ST7789 board.** Read bit-banged (the method `begin()` uses, about 200 kHz, CS held
+across command and reply; 2026-10-11), the panel drives GPIO12. RDDID `0x04` returned `81 81 B3`, and
 RDDST `0x09` returned `00 61 00 00`, the power-on default, both identical under both pulls.
 Without the dummy clock RDDID reads `40 C0 D9`, the same bits one place late, so the
 alignment is right. The datasheet ID is `85 85 52`. `81 81 B3` is either a different module
 programming or an ST7789-compatible controller; which one is **TODO (bench)**. The panel
-leaves `0xD3` and the `0xD9` index trick undriven, so those still read as the pull. Why
-the first probe saw nothing was not pinned down; it used the hardware SPI at 1 MHz.
+leaves `0xD3` and the `0xD9` index trick undriven, so those read as the pull.
 With no pull, GPIO12 idled LOW on both boards, and with the pull-up HIGH. So neither
 board has an external pull on it.
 
 The ILI9341 board's RDDST before init is also `00 61 00 00`, the power-on default, so its
 panel is reset along with the ESP32. That supports the EN-tied reset inferred below.
 
-**Reset test.** GPIO12 was driven LOW for 2 s, then HIGH, and the panel was left 3 s
-before re-init. Neither picture changed (observed). On the ILI9341 board RDDPM read
-`9C` before and after, so the controller kept its state. GPIO12 is therefore not
-`TFT_RST` on either board. The library's earlier reset pulse on GPIO12 was harmless on
-both boards (SDO is high-Z outside reads). Init now
-starts with SWRESET `0x01`. That the panel reset is tied to EN, as on the 2432S028
+Init starts with SWRESET `0x01`. That the panel reset is tied to EN, as on the 2432S028
 (schematic-description §1.6 there), is **inferred**.
 
 **Panel orientation and color**, chosen by touch from cycled variants on each board:
@@ -780,11 +961,10 @@ ST7789 and ST7796.
 A step advances the offset by one or two rows and rewrites the rows that wrapped from
 the top edge to the bottom: `VSCRSADD`, then `RASET` / `RAMWR` for the wrapped rows,
 then their pixels by DMA from the two-row buffer. **The window must be opened again
-after `VSCRSADD`.** Any command ends a memory write; an early version sent the row's
-pixels straight after `VSCRSADD`'s two parameters. The ILI9341 ignores surplus
-parameters, so it merely dropped the row. The ST7789 and ST7796 take them as more
-`VSCRSADD` parameters, so the first pixels (background, `0x0000`) reset the scroll
-offset to 0 every step: the screen jittered and appeared not to scroll at all.
+after `VSCRSADD`.** Any command ends a memory write, so pixels sent straight after
+`VSCRSADD`'s two parameters are not pixels. The ILI9341 ignores surplus parameters
+and drops the row; the ST7789 and ST7796 take them as more `VSCRSADD` parameters, so
+the first pixels (background, `0x0000`) would reset the scroll offset to 0 every step.
 
 Between `VSCRSADD` and the rows landing, the wrapped rows still show what they held at
 the top. Two treatments:
@@ -813,29 +993,7 @@ would amortize the commands further, but the two-row DMA buffer is the design li
 
 **The DMA buffer is laid out at the panel's width.** It is a static array sized for
 the widest panel (2 × 320 pixels), but its two halves are placed back to back at the
-*actual* width, so a two-row transfer is contiguous. With the halves at a fixed
-320-pixel stride, the second row of a two-row transfer on a 240-wide panel came from
-the wrong offset, and text scrolling in showed alternate rows shifted by 80 pixels.
-
-### Racing the beam with GSCAN — tried, and dropped
-
-`GSCAN` (`0x45`) returns the gate line the panel is refreshing. Read back on the
-display's own SPI device — that is, at the 40 MHz *write* clock, about six times the
-read clock the datasheets allow — the controllers behaved differently:
-
-- **ILI9341:** clean. 10-bit line number after a dummy bit
-  (`rx[2] << 2 | rx[3] >> 6`), 0..~323 (320 lines + porches), about 10.3 ms a frame.
-- **ST7796:** clean, but the count tops out near 250 on the 480-line panel, about
-  11.5 ms a frame — it counts two gate lines per step (or reads one bit short; either
-  way, scale ×2).
-- **ST7789:** garbage at this clock on all three boards.
-
-Timing each step to miss the refresh worked (on the ILI9341, 95% of steps could skip
-the pre-blank), but it needed a calibration at start-up, a per-step read, and a
-fallback for the ST7789 — for a flash that the AUTO policy above makes invisible
-anyway. A second SPI device at a read-legal clock can't share the display's CS pin, so
-the ST7789 can't be fixed cheaply. GSCAN reports gate lines, i.e. the glass, not frame
-memory: scrolling doesn't change it.
+*actual* width, so a two-row transfer is contiguous.
 
 ### One line of cells
 
@@ -933,6 +1091,48 @@ glass, so readback can't tell an RGB glass from a BGR one; only the eye can.
 At `begin()`, before the first clear, the terminal writes four faint pixels (red,
 green, blue, a mix), reads them back, and turns readback on only on an exact match
 (`readbackAvailable()`).
+
+**On SDA.** The ESP32-2432S032 / C's panel has no SDO wire (R24 not fitted), but its
+ST7789 drives its bidirectional SDA during a read, which is how `_detectPanel()`
+names it. When the panel answered only there, `begin()` adds the display's SPI device
+with `SPI_DEVICE_3WIRE | SPI_DEVICE_HALFDUPLEX`. Writes are unchanged, and a read
+becomes the half-duplex MISO phase (`length` 0, `rxlength` set), which the peripheral
+samples from MOSI. The XPT2046 on the same bus is deselected throughout, and its DIN
+is only an input. Same 2 MHz clock, same dummy byte and RGB666 format as on GPIO12.
+The display's own check (`display.readback()`, the same four pixels, run in
+`begin()` before the backlight comes on) and the terminal's both pass on the
+resistive unit (2026-11-02). The C wasn't attached. **TODO (bench):** the C.
+`display.readback()` reports `CYDR_READBACK_MISO`, `_SDA` or `_NONE`; `BoardDetect`
+shows it.
+
+**Without readback** (the ESP32-3248S035C, whose ST7796 answers no read on either
+line; 2026-11-02), the same path runs with the read
+skipped. `_ghostUpdate()` records the rect and fills it with the text color, and
+`_ghostWrite()` fills it with the current background color instead of copying saved
+pixels back. So the off phase of the blink and the step that takes the cursor away
+(a move, a lift before drawing, a style or blink change) leave the rect in the
+background color. The cell stays `CELL_KEEP`, so the cell renderer still never
+paints over its neighbours.
+
+**The touch lock.** A capacitive board can carry an XPT2046 with CS on GPIO33 (the
+touch chip's SDA) and DOUT on GPIO12 (see
+[Where the capacitive touch chip sits](#two-wirings-and-how-begin-tells-them-apart)).
+An I²C transfer selects it, and a stray command byte from the display traffic makes
+it shift a result out on GPIO12. A partial word can't linger: raising CS releases
+DOUT at once, and SDA idles high between transfers. So the conflict needs an I²C
+transfer *during* a readback on GPIO12, and the library prevents that.
+`cydr_touchI2cLock()` is held for every GT911 / CST820 transfer, start to stop, and
+`_readRect()` takes it when `cydr_readbackNeedsTouchLock()` — capacitive touch with
+readback on GPIO12 — so a readback waits out any transfer in progress. Uncontended
+it costs nothing; the lock is taken whether or not an XPT2046 is fitted, since the
+library can't see it. Readback on GPIO13 needs no lock (GPIO12 isn't read there), nor
+do the resistive boards (the XPT2046 has its own CS, and the SPI driver serializes the
+devices). Without the lock, on the 3248S035C with R24 bridged, 20,000 bit-banged
+four-pixel reads against about 16,000 GT911 transfers on the other core showed no
+errors; with it, the terminal's cursor test ran alongside about 4,400 GT911 polls a
+second (2026-11-02). A GT911 holding SDA low (the soft-restart hang that `begin()`'s
+bus recovery clears) would keep the XPT2046 selected; nothing in software can help
+that case.
 
 ### Resources
 

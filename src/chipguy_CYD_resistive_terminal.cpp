@@ -166,6 +166,9 @@ bool chipguy_CYD_resistive_terminal::begin(chipguy_CYD_resistive_display &displa
     _CH = font->cellH;
     _cols = _W / CW;
     _rot2 = rot == 2;
+    // Frame memory runs bottom-to-top on screen when MY is set: rotation 2 on
+    // the stock panels, or a mirror-Y override.
+    _rowsUp = display.rowsReversed();
 
     _fixT = _fixB = 0;
     _VSA = _H;
@@ -1017,7 +1020,7 @@ void chipguy_CYD_resistive_terminal::_queue(const uint16_t *buf, int bytes) {
 // memory; with the panel upside down (rotation 2, MADCTL MY) frame memory runs
 // bottom-to-top on screen, so the screen's top area is memory's bottom one.
 void chipguy_CYD_resistive_terminal::_sendScrollDef(int16_t T, int16_t VSA, int16_t B) {
-    int16_t tfa = _rot2 ? B : T, bfa = _rot2 ? T : B;
+    int16_t tfa = _rowsUp ? B : T, bfa = _rowsUp ? T : B;
     uint8_t d[6] = {(uint8_t)(tfa >> 8), (uint8_t)tfa, (uint8_t)(VSA >> 8), (uint8_t)VSA,
                     (uint8_t)(bfa >> 8), (uint8_t)bfa};
     _cmd(CMD_VSCRDEF, d, 6);
@@ -1028,7 +1031,7 @@ void chipguy_CYD_resistive_terminal::_sendScrollDef(int16_t T, int16_t VSA, int1
 // upside down the same picture needs the offset mirrored (README-engineering.md).
 void chipguy_CYD_resistive_terminal::_sendVsp(int32_t vtop, int16_t T, int16_t VSA, int16_t B) {
     int32_t off = pmod(vtop, VSA);
-    int32_t vsp = _rot2 ? B + pmod(VSA - off, VSA) : T + off;
+    int32_t vsp = _rowsUp ? B + pmod(VSA - off, VSA) : T + off;
     uint8_t d[2] = {(uint8_t)(vsp >> 8), (uint8_t)vsp};
     _cmd(CMD_VSCRSADD, d, 2);
 }
@@ -1376,6 +1379,13 @@ bool chipguy_CYD_resistive_terminal::_scrollStep() {
 // The buffer is free whenever nothing else is being drawn; every step that
 // uses it puts the pixels back first (_ghostLift), and the cursor is read
 // and drawn again once the terminal is idle.
+//
+// On a panel that can't be read back (_rbOK false: the ESP32-2432S032's
+// panel has no SDO wire, the ESP32-3248S035C's answers no read) nothing is
+// saved.  The cursor still blinks there, but its off phase is the current
+// background color, and so is what it leaves behind when it moves on: the
+// cursor's own rect -- the whole cell for a block, the bottom rows for an
+// underline, two columns for a bar -- of the old text is lost.
 
 // Read a w x h panel rect into `out` (in _dma, 4-byte aligned) as
 // big-endian RGB565.  The panel sends a dummy byte, then 3 bytes a pixel
@@ -1383,6 +1393,16 @@ bool chipguy_CYD_resistive_terminal::_scrollStep() {
 // time so the raw bytes fit in the buffer, and packed down in place.  Bus
 // held by the caller.
 void chipguy_CYD_resistive_terminal::_readRect(int x, int y, int w, int h, uint16_t *out) {
+    // On a capacitive board reading on GPIO12, wait out any touch-chip I2C
+    // transfer and hold one off: a fitted XPT2046 is selected by SDA low and
+    // can drive GPIO12 (see cydr_touchI2cLock()).
+    bool lock = cydr_readbackNeedsTouchLock();
+    if (lock) cydr_touchI2cLock();
+    _readRectLocked(x, y, w, h, out);
+    if (lock) cydr_touchI2cUnlock();
+}
+
+void chipguy_CYD_resistive_terminal::_readRectLocked(int x, int y, int w, int h, uint16_t *out) {
     uint8_t *end = (uint8_t *)_dma + sizeof(_dma);
     for (int r0 = 0; r0 < h;) {
         uint8_t *at = (uint8_t *)(out + r0 * w);   // 4-aligned: w is even
@@ -1397,7 +1417,10 @@ void chipguy_CYD_resistive_terminal::_readRect(int x, int y, int w, int h, uint1
         t.override_freq_hz = READ_HZ;
         spi_device_polling_transmit(_dev, &t);
         t = {};
-        t.length = n * 8;
+        // On a 3-wire device (the panel answers on SDA) the read is the
+        // half-duplex MISO phase, which the peripheral takes from MOSI.
+        if (_display->readback() == CYDR_READBACK_SDA) { t.length = 0; t.rxlength = n * 8; }
+        else                                              t.length = n * 8;
         t.rx_buffer = at;
         t.user = (void *)1;
         t.flags = SPI_TRANS_DMA_BUFFER_ALIGN_MANUAL;   // aligned: never a heap bounce buffer
@@ -1440,8 +1463,15 @@ void chipguy_CYD_resistive_terminal::_fillRect(int x, int y, int w, int h, uint1
     _blankValid = false;
 }
 
-// Put the saved pixels back: one rect, or two across the wrap point.
+// Put the saved pixels back: one rect, or two across the wrap point.  With
+// no readback, fill the rect(s) with the background color instead.
 void chipguy_CYD_resistive_terminal::_ghostWrite() {
+    if (!_rbOK) {
+        _waitDma();                         // _dma may still be going out
+        for (int k = 0; k < 2 && _ghH[k]; k++)
+            _fillRect(_ghX, _ghY[k], _ghW, _ghH[k], _bg, _dma);
+        return;
+    }
     const uint16_t *src = _dma;
     for (int k = 0; k < 2 && _ghH[k]; k++) {
         _window(_ghX, _ghX + _ghW - 1, _ghY[k], _ghY[k] + _ghH[k] - 1);
@@ -1462,7 +1492,6 @@ void chipguy_CYD_resistive_terminal::_ghostLift() {
 
 // When idle: show, move or take off the cursor over an unheld cell.
 bool chipguy_CYD_resistive_terminal::_ghostUpdate() {
-    if (!_rbOK) return false;
     bool want = false;
     int x = 0, w = 0, y[2] = {0, 0}, h[2] = {0, 0};
     uint16_t color;
@@ -1497,8 +1526,10 @@ bool chipguy_CYD_resistive_terminal::_ghostUpdate() {
     if (want) {
         if (!same) {
             _waitDma();
-            _readRect(x, y[0], w, h[0], _dma);
-            if (h[1]) _readRect(x, y[1], w, h[1], _dma + w * h[0]);
+            if (_rbOK) {
+                _readRect(x, y[0], w, h[0], _dma);
+                if (h[1]) _readRect(x, y[1], w, h[1], _dma + w * h[0]);
+            }
             _ghX = x; _ghW = w;
             _ghY[0] = y[0]; _ghH[0] = h[0];
             _ghY[1] = y[1]; _ghH[1] = h[1];

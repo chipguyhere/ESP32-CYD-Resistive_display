@@ -435,7 +435,9 @@ public:
     // the current text color, alternating with what the cell shows.  Over
     // text the terminal no longer holds (earlier lines, after setCursor()),
     // the task reads the covered pixels back from the panel first, to put
-    // them back; on a panel that can't be read back the cursor hides there.
+    // them back.  On a panel that can't be read back it blinks between the
+    // text color and the background color there, and leaves its rect in the
+    // background color when it moves on.
     void setCursorStyle(cydr_cursor_t style);
 
     // Whether the panel passed the start-up readback check (see above).
@@ -556,6 +558,7 @@ private:
     int16_t _W = 0, _H = 0, _cols = 0;
     uint8_t _CH = 32;
     bool _rot2 = false;
+    bool _rowsUp = false;    // MADCTL MY set: frame memory rows run bottom-to-top
     bool _rbOK = false;                 // the panel reads back
     uint8_t _rbBpp = 3;                 // bytes per pixel it reads back in
     uint32_t _wrHz = 0;                 // the device's own (write) clock
@@ -652,7 +655,8 @@ private:
     void _ghostLift();
     bool _readbackCheck();
     void _ghostWrite();
-    void _readRect(int x, int y, int w, int h, uint16_t *out);
+    void _readRect(int x, int y, int w, int h, uint16_t *out);   // takes the touch-I2C lock if needed
+    void _readRectLocked(int x, int y, int w, int h, uint16_t *out);
     void _fillRect(int x, int y, int w, int h, uint16_t color, uint16_t *spare);
     void _renderRuns(uint32_t bits, uint32_t gen, int32_t top, int py0, int py1, bool pickup);
     void _renderRect(int c0, int c1, uint32_t gen, int32_t top, int py0, int py1, bool pickup);

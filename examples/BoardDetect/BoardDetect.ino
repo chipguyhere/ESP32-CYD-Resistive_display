@@ -2,8 +2,10 @@
  * BoardDetect - which board is this?
  *
  * For the resistive-touch "Cheap Yellow Display" boards: ESP32-2432S028,
- * ESP32-32E 2.8", 3.2", 3.5", 4.0", ESP32-024 2.4" and ESP32-035 3.5" (XPT2046 touch; board
- * and panel detected at start-up).
+ * ESP32-32E 2.8", 3.2", 3.5", 4.0", ESP32-024 2.4", ESP32-035 3.5" and
+ * ESP32-2432S032 (XPT2046 touch), and the capacitive ESP32-2432S032C and
+ * ESP32-3248S035C (GT911), ESP32-2432S024C and JC2432W328 (CST820); board and
+ * panel detected at start-up.
  *
  * Runs the library's board detection and shows the result on the screen (and
  * on Serial at 115200): the board model and its panel, the touch chip, the
@@ -23,6 +25,7 @@
  *   display.panel() / panelName()   ILI9341, ST7789 or ST7796
  *   display.redLedPin()             4 or 22 (-1 if WiFi was on first)
  *   display.greenLedPin() / blueLedPin()   16 / 17 (17 / 16 on the ESP32-024 / -035)
+ *   display.readback() / readbackName()    GPIO12, shared GPIO13 or unavailable
  * See README-board-detection.md.
  *
  * Requires the following libraries:
@@ -73,7 +76,15 @@ static BoardFacts factsFor(cydr_model_t m) {
         case CYDR_MODEL_32E_32:
         case CYDR_MODEL_32E_35_40: return {true,  true,  false, true};
         case CYDR_MODEL_024:
-        case CYDR_MODEL_035:       return {true,  false, true,  false};
+        case CYDR_MODEL_035:
+        case CYDR_MODEL_2432S032:
+        case CYDR_MODEL_2432S032C: return {true,  false, true,  false};
+        // Battery with an SW1 power key, GPIO4 the red LED (bench, 2026-10-31).
+        // The light sensor is taken from GPIO34's reading, not yet a dark test.
+        case CYDR_MODEL_2432S024C:
+        case CYDR_MODEL_JC2432W328: return {true,  false, true,  false};
+        // Micro-USB power only; a photoresistor is fitted (bench, 2026-11-02).
+        case CYDR_MODEL_3248S035C:  return {false, false, true,  false};
         default: gKnown = false;   return {false, false, false, display.redLedPin() == 22};
     }
 }
@@ -168,9 +179,15 @@ static void buildScreen() {
     lv_obj_set_x(gList, 8);
 
     bool shared = display.board() == CYDR_BOARD_SHARED_TOUCH;
-    addLine(shared ? "Touch: XPT2046 on display SPI" : "Touch: XPT2046");
-    addLine(String("Calibration: ") + (lv_setup.touch().loadCalibration() ? "saved" : "defaults"));
-    addLine(String("Backlight: GPIO") + (shared ? 27 : 21));
+    if (lv_setup.touch().capacitive()) {
+        addLine(String("Touch: ") + lv_setup.touch().chipName() + " capacitive (I2C)");
+    } else {
+        addLine(shared ? "Touch: XPT2046 on display SPI" : "Touch: XPT2046");
+        addLine(String("Calibration: ") + (lv_setup.touch().loadCalibration() ? "saved" : "defaults"));
+    }
+    addLine(String("Backlight: GPIO") + display.backlightPin());
+    // Whether pixels can be read back from the panel, and on which pin.
+    addLine(String("Display readback: ") + display.readbackName());
     auto pin = [](int8_t p) { return p < 0 ? String("?") : String(p); };
     addLine("R/G/B LED: GPIO" + pin(display.redLedPin()) + "/" +
             pin(display.greenLedPin()) + "/" + pin(display.blueLedPin()));
@@ -178,6 +195,11 @@ static void buildScreen() {
     lblBattery = addLine(batteryText());
     lblLight = addLine(lightText());
     lblDark = gFacts.lightSensor ? addLine(darkText()) : nullptr;
+    {
+        const char *off = display.powerOffHint();
+        addLine(String("Power off (battery): ") +
+                (off ? off : display.powerKey() == CYDR_PWRKEY_NONE ? "no power key" : "unknown"));
+    }
     addLine("Amplifier: yes");
     addLine(String("Amp power switch: ") +
             (gFacts.ampSwitch ? (gKnown ? "GPIO4" : "GPIO4?") : yesNo(false)));
@@ -222,6 +244,10 @@ void setup() {
     lv_setup.begin();
     pinMode(BOOT_PIN, INPUT_PULLUP);
     gFacts = factsFor(display.model());
+    // A saved override (TouchCalibrate's Overrides screen) can say otherwise.
+    int8_t gpio34 = display.gpio34IsBattery();
+    if (gpio34 >= 0) { gFacts.batteryReading = gpio34; gFacts.lightSensor = !gpio34; }
+    if (display.overrides().redLed) gFacts.ampSwitch = display.redLedPin() == 22;
 
     buildScreen();
     renderNow();          // LVGL draws the screen once; from here loop() draws dots

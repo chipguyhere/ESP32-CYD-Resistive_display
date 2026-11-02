@@ -17,6 +17,9 @@ figure — the schematic, the part datasheets, the arithmetic — are in
 > section hasn't been examined — **TODO (bench)**
 > ([Other boards](README-board.md#other-boards)).
 >
+> The **ESP32-3248S035C** is micro-USB only: no battery connector, charger or power
+> key (one unit, 2026-11-02). **TODO (bench):** its deep-sleep draw.
+>
 > The **ESP32-024** has a battery connector, but its power section is a different design:
 > an **FM5324GA** "power bank" chip — lithium charger and 5 V booster in one — whose
 > output feeds two AMS1117 3.3 V regulators, one for the ESP32 and one for the screen
@@ -33,6 +36,38 @@ figure — the schematic, the part datasheets, the arithmetic — are in
 > board draws little (power-bank chips often do, which would end a deep sleep for good),
 > the deep-sleep current, and charging behavior. The chip's three level-LED outputs are
 > unconnected, so there is no charge light.
+>
+> The **ESP32-035**'s SW1 behaves the same way on battery alone: one press starts the
+> board and two quick presses turn it off (2026-10-23). Its charger chip hasn't been
+> identified, so the rest of this note is **TODO (bench)** for it.
+>
+> The **ESP32-2432S032** and **2432S032C** use an **IP5306** power-bank chip in the same
+> role: SW1 is its key, not wired to the ESP32, and there is no battery reading. On
+> battery alone the board turns **off** either with **two quick presses** or with a
+> **10-second hold**, most likely depending on which IP5306 variant is fitted; the two
+> units' chips carry different markings under the part number. Observed 2026-10-29, one
+> unit each, the other gesture doing nothing:
+>
+> | Board | IP5306 marking | Turns off with |
+> |---|---|---|
+> | ESP32-2432S032 (resistive) | 7021.1HA | two quick presses |
+> | ESP32-2432S032C (capacitive) | 8067.1HW | a 10-second hold |
+> | ESP32-2432S024C | 8052 1HW | a 10-second hold (2026-10-31) |
+> | JC2432W328 | 8050 1HA | a 10-second hold (2026-10-31) |
+>
+> The `1HA` / `1HW` suffix doesn't predict the gesture: the JC2432W328's `1HA` chip
+> holds, like both `1HW` chips. The one double-press unit is also the only one whose
+> marking starts with `7`. That may be the real split, but four units can't show it.
+>
+> The touch type has nothing to do with the power path, so either board could come
+> either way. If one gesture doesn't work, try the other. **TODO (bench):** whether the
+> IP5306 switches itself off at light load (power-bank chips usually do, which would
+> end a deep sleep), and the deep-sleep current.
+>
+> The **ESP32-2432S024C** and **JC2432W328** use an **IP5306** too (markings in the
+> table above), with SW1 as its key. Both turn off with a **10-second hold**, and two
+> quick presses do nothing (2026-10-31, one unit each). **TODO (bench):** whether there
+> is a battery reading, and whether the chip switches itself off at light load.
 
 **The short version.** This is the ESP32-2432S028 CYD with a battery added, and added
 properly. A 2-pin connector takes a single lithium cell; a **TP4054** charger fills it
@@ -209,6 +244,36 @@ control. If you make your own battery pigtail, a switch in the BAT+ lead is the 
 place an "off" can go, and it is invisible to software. Without one there is no way to
 turn the board off short of unplugging both USB and the cell. **Getting out of a hang**
 means the RST button, which restarts the chip but does not remove power.
+
+### The power key on the SW1 boards
+
+The ESP32-32E boards have no power key (above). On the boards with **SW1** it is the
+battery chip's key. It isn't wired to the ESP32, so a sketch can't see it or press it.
+It can only tell the user how to use it. On battery, one press turns the board on, and
+turning it off takes one of two gestures. With USB connected the board stays powered
+whatever SW1 does.
+
+```cpp
+display.powerKey();      // CYDR_PWRKEY_NONE, _DOUBLE_PRESS, _LONG_HOLD, _EITHER, or _UNKNOWN
+display.powerOffHint();  // "hold SW1 for 10 s", "press SW1 twice quickly", ... or nullptr
+```
+
+| `model()` | `powerKey()` | Seen on |
+|---|---|---|
+| `_2432S028`, `_32E_28`, `_32E_32`, `_32E_35_40` | `NONE` | — |
+| `_3248S035C` | `NONE` | no battery connector at all (2026-11-02) |
+| `_024`, `_035` | `DOUBLE_PRESS` | FM5324GA (024); 035 charger not identified |
+| `_2432S032`, `_2432S032C` | `EITHER` | IP5306, one unit each way |
+| `_2432S024C`, `_JC2432W328` | `LONG_HOLD` | IP5306, both held |
+| unknown | `UNKNOWN` | — |
+
+`EITHER` is for a PCB where units have turned up both ways. The IP5306's markings
+haven't predicted which, so a board whose own gesture you've checked should say so in
+the **power key override** in `TouchCalibrate`'s
+[advanced screen](README-overrides.md). The override's **absent / hidden** value makes
+`powerKey()` report `NONE` and `powerOffHint()` return `nullptr`. Use it when the board
+sits in an enclosure that covers SW1, so a sketch doesn't tell the user to press a key
+they can't reach. `BoardDetect` shows the answer as "Power off (battery)".
 
 ### Other buttons
 

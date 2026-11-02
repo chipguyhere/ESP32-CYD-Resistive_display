@@ -2,8 +2,9 @@
  * LvglRotation - change the screen rotation while the sketch runs
  *
  * For the resistive-touch "Cheap Yellow Display" boards: ESP32-2432S028,
- * ESP32-32E 2.8", 3.2", 3.5", 4.0", ESP32-024 2.4" and ESP32-035 3.5"
- * (XPT2046 touch; board and panel detected at start-up).
+ * ESP32-32E 2.8", 3.2", 3.5", 4.0", ESP32-024 2.4", ESP32-035 3.5" and
+ * ESP32-2432S032 / -C, ESP32-2432S024C and JC2432W328 (XPT2046 touch, or the
+ * -C's GT911, or the CST820; board and panel detected at start-up).
  *
  * Tap "Rotate" or press BOOT to step through the four rotations.  Each step
  * turns the picture a quarter-turn clockwise, so turn the board a quarter-turn

@@ -1,6 +1,8 @@
 /*
  * ILI9341 / ST7789 / ST7796 SPI display driver for the resistive-touch CYD
- * family (ESP32-2432S028; ESP32-32E 2.8", 3.2", 3.5", 4.0"; ESP32-024).
+ * family (ESP32-2432S028; ESP32-32E 2.8", 3.2", 3.5", 4.0"; ESP32-024; ESP32-035;
+ * ESP32-2432S032 / -C), and the capacitive ESP32-2432S024C, JC2432W328 and
+ * ESP32-3248S035C.
  * See chipguy_CYD_resistive_display.h for the wiring and usage overview.
  */
 
@@ -8,6 +10,8 @@
 #include <driver/gpio.h>
 #include <esp_heap_caps.h>
 #include <esp32-hal-periman.h>
+#include <Wire.h>
+#include <Preferences.h>
 
 // ── Board pin assignments (fixed on every board) ───────────────────────────
 #define CYDR_TFT_MOSI  13
@@ -18,8 +22,7 @@
 #define CYDR_TFT_BL_OWN    21   // backlight on own-touch boards, active HIGH
 #define CYDR_TFT_BL_SHARED 27   // backlight on shared-touch boards, active HIGH
 #define CYDR_TOUCH_CS  33   // held HIGH during detection so the XPT2046 can't drive GPIO12
-// No reset GPIO: holding GPIO12 LOW resets neither 2.8" panel (bench, 2026-10-10),
-// and the 3.5"/4.0" ties panel reset to EN, so the init sequences start with a
+// No reset GPIO: panel reset is tied to EN, so the init sequences start with a
 // software reset.
 
 // The panels take 40 MHz comfortably over the short CYD traces.  On the
@@ -42,6 +45,23 @@ static cydr_panel_t _cydr_activePanel = CYDR_PANEL_AUTO;
 cydr_panel_t cydr_activePanel() { return _cydr_activePanel; }
 static cydr_model_t _cydr_activeModel = CYDR_MODEL_UNKNOWN;
 cydr_model_t cydr_activeModel() { return _cydr_activeModel; }
+
+// The touch-I2C / readback lock (see the header), created on first use (a
+// function-local static: initialised once, even from two tasks at once).
+static SemaphoreHandle_t _cydr_touchI2cMutex() {
+    static StaticSemaphore_t buf;
+    static SemaphoreHandle_t m = xSemaphoreCreateMutexStatic(&buf);
+    return m;
+}
+void cydr_touchI2cLock()   { xSemaphoreTake(_cydr_touchI2cMutex(), portMAX_DELAY); }
+void cydr_touchI2cUnlock() { xSemaphoreGive(_cydr_touchI2cMutex()); }
+static cydr_readback_t _cydr_activeReadback = CYDR_READBACK_NONE;
+static cydr_board_t _cydr_activeTouchBus = CYDR_BOARD_UNKNOWN;
+cydr_board_t cydr_activeTouchBus() { return _cydr_activeTouchBus; }
+static cydr_touch_chip_t _cydr_activeTouchChip = CYDR_TOUCH_XPT2046;
+cydr_touch_chip_t cydr_activeTouchChip() { return _cydr_activeTouchChip; }
+static uint8_t _cydr_activeTouchAddr = 0;
+uint8_t cydr_activeTouchAddress() { return _cydr_activeTouchAddr; }
 
 // CS is driven by the SPI peripheral (hardware CS), but DC is a plain GPIO.
 // The driver calls this just before each transaction goes on the bus — for
@@ -151,8 +171,12 @@ uint32_t cydr_redLedProbeMillivolts() { return _cydr_redLedMv; }
 // Green / blue: 16 / 17 everywhere but the ESP32-024 and ESP32-035 (17 / 16;
 // seen against the screen on all six boards, 2026-10-18; the -035 2026-10-23).  An unknown model is still answerable
 // on own-touch wiring, where both candidates (2432S028, 32E 2.8") use 16 / 17.
+static uint8_t _cydr_gbOverride = CYDR_OVR_AUTO;
 static bool _cydr_gbKnown(bool &swapped) {
+    if (_cydr_gbOverride) { swapped = _cydr_gbOverride == 2; return true; }
     swapped = _cydr_activeModel == CYDR_MODEL_024 || _cydr_activeModel == CYDR_MODEL_035;
+    // The 2432S032 / -C are 16 / 17 (seen on the -C, 2026-10-29), and so are
+    // the 2432S024C and JC2432W328 (2026-10-31).
     if (_cydr_activeModel != CYDR_MODEL_UNKNOWN) return true;
     return _cydr_activeBoard == CYDR_BOARD_OWN_TOUCH;
 }
@@ -187,12 +211,16 @@ int8_t cydr_blueLedPin()  { bool sw; return _cydr_gbKnown(sw) ? (sw ? 16 : 17) :
 // assumed to be an ST7796.  A silent ST7789 is recognised only on own-touch
 // wiring; the 3.2"'s answers RDDID (bench, 2026-10-13).
 
+// The pin replies are read on: GPIO12 (the panel's SDO) normally.  For the
+// SDA fallback it is MOSI, turned around to an input after the command bytes.
+static int _cydr_bbRx = CYDR_TFT_MISO;
+
 static uint8_t _cydr_bbXfer(uint8_t out) {
     uint8_t in = 0;
     for (int i = 7; i >= 0; i--) {
-        gpio_set_level((gpio_num_t)CYDR_TFT_MOSI, (out >> i) & 1);
+        gpio_set_level((gpio_num_t)CYDR_TFT_MOSI, (out >> i) & 1);  // ignored while MOSI is an input
         delayMicroseconds(2);
-        in = (in << 1) | gpio_get_level((gpio_num_t)CYDR_TFT_MISO);  // end of low phase
+        in = (in << 1) | gpio_get_level((gpio_num_t)_cydr_bbRx);   // end of low phase
         gpio_set_level((gpio_num_t)CYDR_TFT_SCLK, 1);
         delayMicroseconds(2);
         gpio_set_level((gpio_num_t)CYDR_TFT_SCLK, 0);
@@ -200,11 +228,34 @@ static uint8_t _cydr_bbXfer(uint8_t out) {
     return in;
 }
 
+// The ESP32-2432S032 leaves the panel's SDO unconnected (R24, the 0R link to
+// GPIO12, isn't fitted), so it is read the 3-wire way: after the command byte,
+// MOSI is turned around and the ST7789 drives its bidirectional SDA.  RDDID
+// returns 85 85 52 under both pulls there (bench, 2026-10-29, resistive and
+// capacitive units).  Set by _detectPanel() whenever a panel answers only on
+// SDA; with the wiring it names the board (or marks it as an unseen variant).
+static bool _cydr_panelSdaOnly = false;
+
 static void _cydr_bbDummyClock() {
     delayMicroseconds(2);
     gpio_set_level((gpio_num_t)CYDR_TFT_SCLK, 1);
     delayMicroseconds(2);
     gpio_set_level((gpio_num_t)CYDR_TFT_SCLK, 0);
+}
+
+// After the command (and any parameter) bytes, the read phase.  On SDA the
+// ESP32 stops driving MOSI so the panel can.
+static void _cydr_bbReadPhase() {
+    gpio_set_level((gpio_num_t)CYDR_TFT_DC, 1);
+    if (_cydr_bbRx == CYDR_TFT_MOSI)
+        gpio_set_direction((gpio_num_t)CYDR_TFT_MOSI, GPIO_MODE_INPUT);
+}
+
+static void _cydr_bbEnd() {
+    gpio_set_level((gpio_num_t)CYDR_TFT_CS, 1);
+    if (_cydr_bbRx == CYDR_TFT_MOSI)
+        gpio_set_direction((gpio_num_t)CYDR_TFT_MOSI, GPIO_MODE_OUTPUT);
+    delayMicroseconds(5);
 }
 
 // Write the 0xD9 index, then read one byte of 0xD3.
@@ -219,10 +270,9 @@ static uint8_t _cydr_bbReadIdx(uint8_t idx) {
     gpio_set_level((gpio_num_t)CYDR_TFT_CS, 0);
     gpio_set_level((gpio_num_t)CYDR_TFT_DC, 0);
     _cydr_bbXfer(0xD3);
-    gpio_set_level((gpio_num_t)CYDR_TFT_DC, 1);
+    _cydr_bbReadPhase();
     uint8_t v = _cydr_bbXfer(0x00);
-    gpio_set_level((gpio_num_t)CYDR_TFT_CS, 1);
-    delayMicroseconds(5);
+    _cydr_bbEnd();
     return v;
 }
 
@@ -231,11 +281,59 @@ static void _cydr_bbRead3(uint8_t cmd, uint8_t out[3]) {
     gpio_set_level((gpio_num_t)CYDR_TFT_CS, 0);
     gpio_set_level((gpio_num_t)CYDR_TFT_DC, 0);
     _cydr_bbXfer(cmd);
-    gpio_set_level((gpio_num_t)CYDR_TFT_DC, 1);
+    _cydr_bbReadPhase();
     _cydr_bbDummyClock();
     for (int i = 0; i < 3; i++) out[i] = _cydr_bbXfer(0x00);
-    gpio_set_level((gpio_num_t)CYDR_TFT_CS, 1);
-    delayMicroseconds(5);
+    _cydr_bbEnd();
+}
+
+// Every ID read, under the pull-up [0] and the pull-down [1] on the read pin.
+struct _cydr_idReads {
+    uint8_t id[2][2];       // ILI9341 index reads, ID bytes 2 and 3
+    uint8_t d3[2][3];       // 0xD3 (ST7796)
+    uint8_t rddid[2][3];    // 0x04 (ST7789)
+};
+
+static void _cydr_readIds(int rx, _cydr_idReads &r) {
+    static const gpio_pull_mode_t pulls[2] = {GPIO_PULLUP_ONLY, GPIO_PULLDOWN_ONLY};
+    _cydr_bbRx = rx;
+    for (int p = 0; p < 2; p++) {
+        gpio_set_pull_mode((gpio_num_t)rx, pulls[p]);
+        delayMicroseconds(50);
+        r.id[p][0] = _cydr_bbReadIdx(2);
+        r.id[p][1] = _cydr_bbReadIdx(3);
+        _cydr_bbRead3(0xD3, r.d3[p]);
+        _cydr_bbRead3(0x04, r.rddid[p]);
+    }
+    _cydr_bbRx = CYDR_TFT_MISO;
+}
+
+// An ID that came back the same under both pulls; AUTO if none.  RDDID bytes 2
+// and 3 (version, driver ID) for the ST7789; byte 1 is the module vendor and varies.
+static cydr_panel_t _cydr_panelFromIds(const _cydr_idReads &r) {
+    if (r.id[0][0] == 0x93 && r.id[0][1] == 0x41 && r.id[1][0] == 0x93 && r.id[1][1] == 0x41)
+        return CYDR_PANEL_ILI9341;
+    if (r.d3[0][1] == 0x77 && r.d3[0][2] == 0x96 && r.d3[1][1] == 0x77 && r.d3[1][2] == 0x96)
+        return CYDR_PANEL_ST7796;
+    static const uint8_t st7789Ids[][2] = {{0x85, 0x52}, {0x81, 0xB3}};
+    for (const auto &st : st7789Ids) {
+        if (r.rddid[0][1] == st[0] && r.rddid[0][2] == st[1] &&
+            r.rddid[1][1] == st[0] && r.rddid[1][2] == st[1])
+            return CYDR_PANEL_ST7789;
+    }
+    return CYDR_PANEL_AUTO;
+}
+
+// True if every byte just followed the pull: FF under the pull-up, 00 under
+// the pull-down -- nothing drove the pin.
+static bool _cydr_followedPull(const _cydr_idReads &r) {
+    for (int p = 0; p < 2; p++) {
+        uint8_t want = p == 0 ? 0xFF : 0x00;
+        if (r.id[p][0] != want || r.id[p][1] != want) return false;
+        for (int i = 0; i < 3; i++)
+            if (r.d3[p][i] != want || r.rddid[p][i] != want) return false;
+    }
+    return true;
 }
 
 cydr_panel_t chipguy_CYD_resistive_display::_detectPanel(cydr_board_t boardHint) {
@@ -249,35 +347,35 @@ cydr_panel_t chipguy_CYD_resistive_display::_detectPanel(cydr_board_t boardHint)
     gpio_set_level((gpio_num_t)CYDR_TFT_CS, 1);
     gpio_set_direction((gpio_num_t)CYDR_TFT_MISO, GPIO_MODE_INPUT);
 
-    uint8_t id[2][2];
-    uint8_t d3[2][3];
-    uint8_t rddid[2][3];
-    const gpio_pull_mode_t pulls[2] = {GPIO_PULLUP_ONLY, GPIO_PULLDOWN_ONLY};
-    for (int p = 0; p < 2; p++) {
-        gpio_set_pull_mode((gpio_num_t)CYDR_TFT_MISO, pulls[p]);
-        delayMicroseconds(50);
-        id[p][0] = _cydr_bbReadIdx(2);
-        id[p][1] = _cydr_bbReadIdx(3);
-        _cydr_bbRead3(0xD3, d3[p]);
-        _cydr_bbRead3(0x04, rddid[p]);
-    }
+    _cydr_idReads r;
+    _cydr_readIds(CYDR_TFT_MISO, r);
     // Leave GPIO12 as the chip's reset default: an input with pull-down.
     // It is the MTDI strapping pin, and the panel only drives it during reads.
+    cydr_panel_t found = _cydr_panelFromIds(r);
+    if (found != CYDR_PANEL_AUTO) return found;
 
-    if (id[0][0] == 0x93 && id[0][1] == 0x41 && id[1][0] == 0x93 && id[1][1] == 0x41)
-        return CYDR_PANEL_ILI9341;
-    if (d3[0][1] == 0x77 && d3[0][2] == 0x96 && d3[1][1] == 0x77 && d3[1][2] == 0x96)
-        return CYDR_PANEL_ST7796;
-    // RDDID bytes 2 and 3 (version, driver ID) under both pulls; byte 1 is the
-    // module vendor and varies.
-    static const uint8_t st7789Ids[][2] = {{0x85, 0x52}, {0x81, 0xB3}};
-    for (const auto &st : st7789Ids) {
-        if (rddid[0][1] == st[0] && rddid[0][2] == st[1] &&
-            rddid[1][1] == st[0] && rddid[1][2] == st[1])
-            return CYDR_PANEL_ST7789;
+    // Nothing drove GPIO12 at all: the panel's SDO may not be wired.  Ask
+    // again with the replies read back on SDA (the 2432S032's panel; any panel
+    // in a bidirectional-SDA serial mode would answer the same way).
+    if (_cydr_followedPull(r)) {
+        _cydr_idReads s;
+        _cydr_readIds(CYDR_TFT_MOSI, s);
+        gpio_set_pull_mode((gpio_num_t)CYDR_TFT_MOSI, GPIO_FLOATING);
+        found = _cydr_panelFromIds(s);
+        if (found != CYDR_PANEL_AUTO) {
+            _cydr_panelSdaOnly = true;
+            return found;
+        }
+        if (!_cydr_followedPull(s))
+            Serial.printf("cydr display: panel silent on GPIO12; on SDA it sent "
+                          "idx %02X %02X, D3 %02X %02X %02X, RDDID %02X %02X %02X\n",
+                          s.id[0][0], s.id[0][1], s.d3[0][0], s.d3[0][1], s.d3[0][2],
+                          s.rddid[0][0], s.rddid[0][1], s.rddid[0][2]);
     }
-    bool silent = id[0][0] == 0xFF && id[0][1] == 0xFF && id[1][0] == 0x00 && id[1][1] == 0x00;
-    if (silent && boardHint != CYDR_BOARD_SHARED_TOUCH)
+    bool idxSilent = r.id[0][0] == 0xFF && r.id[0][1] == 0xFF &&
+                     r.id[1][0] == 0x00 && r.id[1][1] == 0x00;
+    _panelGuessed = true;              // from here on the type is inferred
+    if (idxSilent && boardHint != CYDR_BOARD_SHARED_TOUCH)
         return CYDR_PANEL_ST7789;      // the 2.8" ST7789 answers nothing to 0xD3
 
     // Nothing recognised: go by the board.
@@ -285,8 +383,8 @@ cydr_panel_t chipguy_CYD_resistive_display::_detectPanel(cydr_board_t boardHint)
                                                              : CYDR_PANEL_ILI9341;
     Serial.printf("cydr display: unrecognised panel (idx %02X %02X / %02X %02X, "
                   "D3 %02X %02X %02X, RDDID %02X %02X %02X); assuming %s\n",
-                  id[0][0], id[0][1], id[1][0], id[1][1],
-                  d3[0][0], d3[0][1], d3[0][2], rddid[0][0], rddid[0][1], rddid[0][2],
+                  r.id[0][0], r.id[0][1], r.id[1][0], r.id[1][1],
+                  r.d3[0][0], r.d3[0][1], r.d3[0][2], r.rddid[0][0], r.rddid[0][1], r.rddid[0][2],
                   guess == CYDR_PANEL_ST7796 ? "ST7796" : "ILI9341");
     return guess;
 }
@@ -300,17 +398,125 @@ const char *chipguy_CYD_resistive_display::panelName() const {
     }
 }
 
-const char *chipguy_CYD_resistive_display::modelName() const {
-    switch (_model) {
+const char *chipguy_CYD_resistive_display::modelName(cydr_model_t m, uint8_t sizeTenths) {
+    switch (m) {
         case CYDR_MODEL_2432S028:  return "ESP32-2432S028";
         case CYDR_MODEL_32E_28:    return "ESP32-32E 2.8\"";
         case CYDR_MODEL_32E_32:    return "ESP32-32E 3.2\"";
-        case CYDR_MODEL_32E_35_40: return "ESP32-32E 3.5\"/4.0\"";
+        case CYDR_MODEL_32E_35_40: return sizeTenths == 35 ? "ESP32-32E 3.5\"" :
+                                          sizeTenths == 40 ? "ESP32-32E 4.0\"" :
+                                                             "ESP32-32E 3.5\"/4.0\"";
         case CYDR_MODEL_024:       return "ESP32-024 2.4\"";
         case CYDR_MODEL_035:       return "ESP32-035 3.5\"";
+        case CYDR_MODEL_2432S032:  return "ESP32-2432S032";
+        case CYDR_MODEL_2432S032C: return "ESP32-2432S032C";
+        case CYDR_MODEL_2432S024C: return "ESP32-2432S024C";
+        case CYDR_MODEL_JC2432W328: return "JC2432W328 2.8\"";
+        case CYDR_MODEL_3248S035C: return "ESP32-3248S035C";
         default:                   return "unknown";
     }
 }
+
+const char *chipguy_CYD_resistive_display::modelName() const {
+    return modelName(_model, _sizeTenths);
+}
+
+// What a model implies, for the model override (and the size for every model).
+struct _cydr_modelFacts {
+    cydr_board_t board;          // backlight 21 (OWN) or 27 (SHARED), and the XPT2046 bus
+    int8_t redLed;
+    cydr_touch_chip_t chip;
+    uint8_t sizeTenths;          // 0: not told by the model
+    cydr_power_key_t powerKey;   // README-power.md; one unit of each observed
+};
+static _cydr_modelFacts _cydr_factsOf(cydr_model_t m) {
+    switch (m) {
+        // The ESP32-2432S032 pair came one each way (IP5306 7021.1HA: press
+        // twice; 8067.1HW: hold), so that PCB is EITHER; the 2432S024C and
+        // JC2432W328 (8052 1HW, 8050 1HA) both held (bench, 2026-10-31).
+        case CYDR_MODEL_2432S028:   return {CYDR_BOARD_OWN_TOUCH,    4, CYDR_TOUCH_XPT2046, 28, CYDR_PWRKEY_NONE};
+        case CYDR_MODEL_32E_28:     return {CYDR_BOARD_OWN_TOUCH,   22, CYDR_TOUCH_XPT2046, 28, CYDR_PWRKEY_NONE};
+        case CYDR_MODEL_32E_32:     return {CYDR_BOARD_SHARED_TOUCH,22, CYDR_TOUCH_XPT2046, 32, CYDR_PWRKEY_NONE};
+        case CYDR_MODEL_32E_35_40:  return {CYDR_BOARD_SHARED_TOUCH,22, CYDR_TOUCH_XPT2046, 0,  CYDR_PWRKEY_NONE};
+        case CYDR_MODEL_024:        return {CYDR_BOARD_SHARED_TOUCH, 4, CYDR_TOUCH_XPT2046, 24, CYDR_PWRKEY_DOUBLE_PRESS};
+        case CYDR_MODEL_035:        return {CYDR_BOARD_SHARED_TOUCH, 4, CYDR_TOUCH_XPT2046, 35, CYDR_PWRKEY_DOUBLE_PRESS};
+        case CYDR_MODEL_2432S032:   return {CYDR_BOARD_SHARED_TOUCH, 4, CYDR_TOUCH_XPT2046, 32, CYDR_PWRKEY_EITHER};
+        case CYDR_MODEL_2432S032C:  return {CYDR_BOARD_SHARED_TOUCH, 4, CYDR_TOUCH_GT911,   32, CYDR_PWRKEY_EITHER};
+        case CYDR_MODEL_2432S024C:  return {CYDR_BOARD_SHARED_TOUCH, 4, CYDR_TOUCH_CST820,  24, CYDR_PWRKEY_LONG_HOLD};
+        case CYDR_MODEL_JC2432W328: return {CYDR_BOARD_SHARED_TOUCH, 4, CYDR_TOUCH_CST820,  28, CYDR_PWRKEY_LONG_HOLD};
+        // No battery connector, charger or power key (bench, 2026-11-02).
+        case CYDR_MODEL_3248S035C:  return {CYDR_BOARD_SHARED_TOUCH, 4, CYDR_TOUCH_GT911,   35, CYDR_PWRKEY_NONE};
+        default:                    return {CYDR_BOARD_UNKNOWN,     -1, CYDR_TOUCH_XPT2046, 0,  CYDR_PWRKEY_UNKNOWN};
+    }
+}
+
+// Capacitive touch chips on SDA 33 / SCL 32.  The ESP32-2432S032C's GT911 sits
+// where the 2432S032 has its XPT2046 (CS on 33); it answers at 0x5D on the
+// unit probed (bench, 2026-10-29), and 0x14 is its other strap.  The
+// 2432S024C's and JC2432W328's CST820 answers at 0x15 (chip ID 0xB7 at
+// register 0xA7; bench, 2026-10-31).  On the resistive boards the probe toggles
+// the XPT2046's CS (33) and DIN (32) with its clock idle, which it ignores.
+// Neither chip is reset: RST (GPIO25) is left alone -- on the own-touch boards
+// GPIO25 is the XPT2046's clock.
+//
+// A soft restart (ESP.restart()) doesn't reset the touch chip, and the bus
+// can come out of it with the chip mid-transfer: the CST820 then ignores its
+// address, the board is taken for a resistive one, and the XPT2046 set-up
+// that follows drives SDA / SCL as SPI and keeps it that way.  Seen on both
+// CST820 boards with the library's own begin() -- every restart on the
+// 2432S024C, every other one on the JC2432W328 (bench, 2026-10-31).  So
+// each probe first recovers the bus -- SCL clocked until the chip lets go
+// of SDA, then a STOP -- and asks a few times.  On the resistive boards that
+// is more CS / DIN toggling with the XPT2046's clock idle.
+static void _cydr_i2cBusRecover() {
+    const gpio_num_t sda = GPIO_NUM_33, scl = GPIO_NUM_32;
+    gpio_reset_pin(sda);                 // inputs with pull-ups, off any peripheral
+    gpio_reset_pin(scl);
+    gpio_set_level(scl, 1);
+    gpio_set_direction(scl, GPIO_MODE_INPUT_OUTPUT_OD);
+    delayMicroseconds(5);
+    for (int i = 0; i < 9 && !gpio_get_level(sda); i++) {
+        gpio_set_level(scl, 0); delayMicroseconds(5);
+        gpio_set_level(scl, 1); delayMicroseconds(5);
+    }
+    // STOP: SDA rises while SCL is high.
+    gpio_set_level(scl, 0); delayMicroseconds(5);
+    gpio_set_level(sda, 0);
+    gpio_set_direction(sda, GPIO_MODE_INPUT_OUTPUT_OD);
+    delayMicroseconds(5);
+    gpio_set_level(scl, 1); delayMicroseconds(5);
+    gpio_set_level(sda, 1); delayMicroseconds(5);
+    gpio_reset_pin(sda);
+    gpio_reset_pin(scl);
+}
+
+cydr_touch_chip_t cydr_probeI2cTouch(uint8_t *addr) {
+    cydr_touch_chip_t found = CYDR_TOUCH_XPT2046;
+    uint8_t at = 0;
+    static const struct { uint8_t a; cydr_touch_chip_t c; } cands[] = {
+        {0x15, CYDR_TOUCH_CST820}, {0x5D, CYDR_TOUCH_GT911}, {0x14, CYDR_TOUCH_GT911}};
+    for (int attempt = 0; attempt < 3 && !at; attempt++) {
+        if (attempt) delay(10);
+        _cydr_i2cBusRecover();
+        Wire1.begin(33, 32, 400000);
+        for (const auto &c : cands) {
+            Wire1.beginTransmission(c.a);
+            if (Wire1.endTransmission() == 0) { found = c.c; at = c.a; break; }
+        }
+        Wire1.end();
+    }
+    gpio_reset_pin(GPIO_NUM_33);
+    gpio_reset_pin(GPIO_NUM_32);
+    if (addr) *addr = at;
+    return found;
+}
+
+uint8_t cydr_gt911Address() {
+    uint8_t a;
+    return cydr_probeI2cTouch(&a) == CYDR_TOUCH_GT911 ? a : 0;
+}
+
+static int8_t _cydr_gpio34FromModel(cydr_model_t m);
 
 // The wiring, panel and red LED pin together name the board.  -1 (no GPIO4
 // reading) leaves the 240x320 boards unknown; a 320x480 one is taken for the
@@ -364,7 +570,8 @@ void chipguy_CYD_resistive_display::_initILI9341() {
 // ON — without INVON it shows inverse video (bench, 2026-10-13), and with it
 // the 2.4" does (bench, 2026-10-18).  The 3.2" is the only shared-touch ST7789
 // with an amplifier on GPIO4, so a board whose model is unknown (no GPIO4
-// reading) keeps the 3.2"'s INVON as before.
+// reading) keeps the 3.2"'s INVON as before.  The 2432S032 needs it ON too
+// (bench, 2026-10-29).
 void chipguy_CYD_resistive_display::_initST7789() {
     _cmd(0x01);                            // Software reset
     delay(150);
@@ -372,8 +579,6 @@ void chipguy_CYD_resistive_display::_initST7789() {
     delay(120);
     _cmd(0x3A); _data8(0x55);              // Pixel format: 16-bit RGB565
     _cmd(0x36); _data8(0x00);              // MADCTL (overwritten by setRotation)
-    bool invon = _board == CYDR_BOARD_SHARED_TOUCH && _model != CYDR_MODEL_024;
-    _cmd(invon ? 0x21 : 0x20);             // Inversion on (3.2") / off (2.8", 2.4")
     _cmd(0x13);                            // Normal display mode
     _cmd(0x29);                            // Display on
     delay(20);
@@ -465,28 +670,172 @@ bool chipguy_CYD_resistive_display::begin(uint16_t rotation) {
     // Which board, then which panel.  Both must run before spi_bus_initialize()
     // takes the pins, and the board check before the backlight is driven.
     cydr_board_t hint = cydr_detectBoardPassive();
+    if (_useOverrides) cydr_loadOverrides(_ovr);
+    else               _ovr = {};
     if (_panel == CYDR_PANEL_AUTO) _panel = _detectPanel(hint);
+    // The panel override only stands in for a guess, never for an ID.
+    if (_panelGuessed && _ovr.panel >= CYDR_PANEL_ILI9341 && _ovr.panel <= CYDR_PANEL_ST7796) {
+        _auto.panel = _panel;
+        _panel = (cydr_panel_t)_ovr.panel;
+    }
+    // A capacitive touch chip on I2C, on any board.
+    uint8_t capAddr = 0;
+    cydr_touch_chip_t cap = cydr_probeI2cTouch(&capAddr);
     // The wiring comes from the backlight pins; only if they are
-    // inconclusive is it guessed from the panel.
+    // inconclusive is it guessed -- backlight 27 where a capacitive chip
+    // answers (on the 2432S024C GPIO21 is the CST820's INT, which spoils the
+    // GPIO21 reading; bench, 2026-10-31), else from the panel.
     _board = hint;
     if (_board == CYDR_BOARD_UNKNOWN) {
-        _board = _panel == CYDR_PANEL_ST7796 ? CYDR_BOARD_SHARED_TOUCH
-                                               : CYDR_BOARD_OWN_TOUCH;
+        _board = cap != CYDR_TOUCH_XPT2046 || _panel == CYDR_PANEL_ST7796
+                     ? CYDR_BOARD_SHARED_TOUCH : CYDR_BOARD_OWN_TOUCH;
         Serial.printf("cydr display: backlight pins inconclusive; assuming "
-                      "backlight GPIO%d from the %s panel\n",
+                      "backlight GPIO%d from the %s\n",
                       _board == CYDR_BOARD_SHARED_TOUCH ? CYDR_TFT_BL_SHARED : CYDR_TFT_BL_OWN,
-                      panelName());
+                      cap != CYDR_TOUCH_XPT2046 ? "capacitive touch chip" : panelName());
     }
     _cydr_activeBoard = _board;
     _cydr_activePanel = _panel;
     // Latch the red LED pin now, while ADC2 is still ours (before WiFi); it
     // names the board, and the ST7789 init depends on which.
-    _model = _cydr_modelFrom(_board, _panel, cydr_redLedPin());
+    if (_cydr_panelSdaOnly && _board == CYDR_BOARD_SHARED_TOUCH && _panel == CYDR_PANEL_ST7789) {
+        // The 2432S032 is named by its panel, and its schematic puts the red
+        // LED on GPIO4 -- but a unit whose LED is dead reads ~130 mV there,
+        // which the voltage test would take for a failed read (bench,
+        // 2026-10-29).  GPIO4's pull-down is on from reset and lights the LED
+        // dimly, so clear it as the voltage test would have.
+        if (_cydr_redLed < 0) _cydr_redLed = 4;
+        gpio_set_pull_mode(GPIO_NUM_4, GPIO_FLOATING);
+        _model = cap == CYDR_TOUCH_GT911 ? CYDR_MODEL_2432S032C : CYDR_MODEL_2432S032;
+    } else if (cap == CYDR_TOUCH_CST820) {
+        // CST820 boards: the panel names them.  The 2432S024C's backlight
+        // pins read inconclusive (GPIO21 is the touch INT), the JC2432W328's
+        // shared-touch, as the ESP32-024 it would otherwise be taken for.
+        cydr_redLedPin();                  // measured: it answers redLedPin()
+        if (_panel == CYDR_PANEL_ILI9341 && hint != CYDR_BOARD_OWN_TOUCH)
+            _model = CYDR_MODEL_2432S024C;
+        else if (_panel == CYDR_PANEL_ST7789 && hint == CYDR_BOARD_SHARED_TOUCH)
+            _model = CYDR_MODEL_JC2432W328;
+        else {
+            _model = CYDR_MODEL_UNKNOWN;
+            Serial.printf("cydr display: CST820 touch with a %s panel on %s wiring: "
+                          "an unseen board variant; model unknown\n", panelName(),
+                          hint == CYDR_BOARD_SHARED_TOUCH ? "shared-touch" :
+                          hint == CYDR_BOARD_OWN_TOUCH ? "own-touch" : "undetermined");
+        }
+    } else if (cap == CYDR_TOUCH_GT911 && _panel == CYDR_PANEL_ST7796 &&
+               _board == CYDR_BOARD_SHARED_TOUCH) {
+        // The ESP32-3248S035C.  Its ST7796 answers no ID read on GPIO12 or on
+        // SDA, so the panel is the shared-touch guess; the GT911 (0x5D) names
+        // the board (bench, 2026-11-02).  The vendor puts the RGB LED on
+        // 4 / 16 / 17, but GPIO4 only follows the internal pulls (0.13 V
+        // with the pull-down, so the voltage test would call it a failed
+        // read), and on the unit seen no pin lit its LED.  Clear the reset
+        // pull-down as the voltage test would have.
+        if (_cydr_redLed < 0) _cydr_redLed = 4;
+        gpio_set_pull_mode(GPIO_NUM_4, GPIO_FLOATING);
+        _model = CYDR_MODEL_3248S035C;
+    } else if (cap == CYDR_TOUCH_GT911) {
+        // A GT911 anywhere else: touch is driven, the board isn't named.
+        cydr_redLedPin();
+        _model = CYDR_MODEL_UNKNOWN;
+        Serial.printf("cydr display: GT911 touch with a %s panel: an unseen board "
+                      "variant; model unknown\n", panelName());
+    } else if (_cydr_panelSdaOnly &&
+               !(_panel == CYDR_PANEL_ST7789 && hint == CYDR_BOARD_OWN_TOUCH)) {
+        // A panel that answers only on SDA, on no board seen so far.  The
+        // panel (and so the geometry) is known; the board isn't.
+        _model = CYDR_MODEL_UNKNOWN;
+        cydr_redLedPin();                  // still measured, for the log
+        Serial.printf("cydr display: %s answered only on SDA (GPIO13) on %s wiring: "
+                      "an unseen board variant; model unknown\n", panelName(),
+                      hint == CYDR_BOARD_SHARED_TOUCH ? "shared-touch" :
+                      hint == CYDR_BOARD_OWN_TOUCH ? "own-touch" : "undetermined");
+    } else {
+        // An own-touch ST7789 answering only on SDA is the 2.8" panel that is
+        // silent on GPIO12, already known; it is named as before.
+        _model = _cydr_modelFrom(_board, _panel, cydr_redLedPin());
+    }
+    _touchChip = cap;
+    _touchAddr = capAddr;
+    // The model as detected, and the red LED as measured, before the model
+    // override replaces them.  (Everything else's auto value is what follows
+    // from the model in effect.)
+    _auto.model  = _model;
+    _auto.redLed = _cydr_redLed == 4 ? 1 : _cydr_redLed == 22 ? 2 : 0;
+
+    // A forced model brings what it implies: the wiring (so the backlight and
+    // the XPT2046's bus), the red LED, and the touch chip.  The panel stays
+    // as detected.
+    if (_ovr.model > CYDR_MODEL_UNKNOWN && _ovr.model < CYDR_MODEL_COUNT) {
+        _model = (cydr_model_t)_ovr.model;
+        _cydr_modelFacts f = _cydr_factsOf(_model);
+        _board = f.board;
+        _cydr_redLed = f.redLed;
+        _touchChip = f.chip;
+        _touchAddr = cap == f.chip ? capAddr : 0;   // the touch driver probes if 0
+    }
     _cydr_activeModel = _model;
+    _cydr_activeBoard = _board;
+    _cydr_activeTouchChip = _touchChip;
+    _cydr_activeTouchAddr = _touchAddr;
+    // Size and power key follow the model in effect (forced or detected),
+    // and are what the auto values report.
+    _sizeTenths = _cydr_factsOf(_model).sizeTenths;
+    _auto.size = 0;
+    for (uint8_t i = 1; i < sizeof cydr_sizeTenths; i++)
+        if (cydr_sizeTenths[i] == _sizeTenths) _auto.size = i;
+    if (_ovr.size) _sizeTenths = cydr_sizeTenths[_ovr.size];
+    _powerKey = _cydr_factsOf(_model).powerKey;
+    _auto.powerKey = _powerKey;
+    if (_ovr.powerKey) _powerKey = (cydr_power_key_t)_ovr.powerKey;
 
     if (_panel == CYDR_PANEL_ST7796) { _nativeW = 320; _nativeH = 480; }
     else                               { _nativeW = 240; _nativeH = 320; }
     _blPin = _board == CYDR_BOARD_SHARED_TOUCH ? CYDR_TFT_BL_SHARED : CYDR_TFT_BL_OWN;
+    _touchBus = _board;
+
+    // What detection chose, before any override.  The ST7789 panels have RGB
+    // order and the other column direction; inversion is on for the 3.2" and
+    // the 2432S032 (and an unknown shared-touch ST7789, as the 3.2") and off
+    // for the 2.8", the ST7789 ESP32-024 and the JC2432W328.
+    _bgr = _panel != CYDR_PANEL_ST7789;
+    _mx0 = _panel != CYDR_PANEL_ST7789;
+    _my0 = false;
+    _invert = _panel == CYDR_PANEL_ST7789 && _board == CYDR_BOARD_SHARED_TOUCH &&
+              _model != CYDR_MODEL_024 && _model != CYDR_MODEL_JC2432W328;
+    _spiHz = CYDR_TFT_SPI_HZ;
+    _auto.colorOrder = _bgr ? 2 : 1;
+    _auto.inversion  = _invert ? 2 : 1;
+    _auto.mirrorX    = _mx0 ? 2 : 1;
+    _auto.mirrorY    = _my0 ? 2 : 1;
+    _auto.backlight  = _blPin == CYDR_TFT_BL_SHARED ? 2 : 1;
+    _auto.touchBus   = _touchBus == CYDR_BOARD_SHARED_TOUCH ? 2 : 1;
+    _cydr_gbOverride = CYDR_OVR_AUTO;
+    { bool sw; _auto.greenBlue = _cydr_gbKnown(sw) ? (sw ? 2 : 1) : 0; }
+    { int8_t g = _cydr_gpio34FromModel(_model); _auto.gpio34 = g < 0 ? 0 : g ? 2 : 1; }
+
+    // Apply the overrides.
+    if (_ovr.colorOrder) _bgr = _ovr.colorOrder == 2;
+    if (_ovr.inversion)  _invert = _ovr.inversion == 2;
+    if (_ovr.mirrorX)    _mx0 = _ovr.mirrorX == 2;
+    if (_ovr.mirrorY)    _my0 = _ovr.mirrorY == 2;
+    if (_ovr.spiClock)   _spiHz = _ovr.spiClock == 2 ? 20000000 : 27000000;
+    if (_spiHzForced)    _spiHz = _spiHzForced;
+    if (_ovr.backlight)  _blPin = _ovr.backlight == 2 ? CYDR_TFT_BL_SHARED : CYDR_TFT_BL_OWN;
+    if (_ovr.touchBus)   _touchBus = _ovr.touchBus == 2 ? CYDR_BOARD_SHARED_TOUCH : CYDR_BOARD_OWN_TOUCH;
+    if (_ovr.redLed)     _cydr_redLed = _ovr.redLed == 2 ? 22 : 4;
+    _cydr_gbOverride = _ovr.greenBlue;
+    _cydr_activeTouchBus = _touchBus;
+    if (cydr_anyOverride(_ovr))
+        Serial.printf("cydr display: overrides from NVS in effect (panel %u, RGB/BGR %u, "
+                      "inversion %u, MX %u, MY %u, SPI %u, backlight %u, touch bus %u, "
+                      "touch MX %u MY %u swap %u, red %u, G/B %u, GPIO34 %u, model %u, size %u, "
+                      "power key %u)\n",
+                      _ovr.panel, _ovr.colorOrder, _ovr.inversion, _ovr.mirrorX, _ovr.mirrorY,
+                      _ovr.spiClock, _ovr.backlight, _ovr.touchBus, _ovr.touchMirrorX,
+                      _ovr.touchMirrorY, _ovr.touchSwapXY, _ovr.redLed, _ovr.greenBlue,
+                      _ovr.gpio34, _ovr.model, _ovr.size, _ovr.powerKey);
 
     // Register the SPI bus with the ESP-IDF master driver.  MISO is on the
     // bus on every board: the shared-touch boards' XPT2046 returns its samples
@@ -509,12 +858,16 @@ bool chipguy_CYD_resistive_display::begin(uint16_t rotation) {
     }
 
     spi_device_interface_config_t devcfg = {};
-    devcfg.clock_speed_hz = CYDR_TFT_SPI_HZ;
+    devcfg.clock_speed_hz = (int)_spiHz;
     devcfg.mode = 0;
     devcfg.spics_io_num = CYDR_TFT_CS;   // hardware-managed CS
     devcfg.queue_size = 1;              // one async pixel transfer in flight
     devcfg.pre_cb = _cydr_spi_pre_cb;    // sets DC from each transaction's user flag
     devcfg.flags = SPI_DEVICE_NO_DUMMY;
+    // A panel that answers only on SDA (the 2432S032's: no SDO wire) is read
+    // the 3-wire way: the SPI peripheral turns MOSI around for the read phase
+    // of a half-duplex transaction.  Writes are unchanged.
+    if (_cydr_panelSdaOnly) devcfg.flags |= SPI_DEVICE_3WIRE | SPI_DEVICE_HALFDUPLEX;
 
     err = spi_bus_add_device(CYDR_TFT_SPI_HOST, &devcfg, &_spi);
     if (err != ESP_OK) {
@@ -528,7 +881,10 @@ bool chipguy_CYD_resistive_display::begin(uint16_t rotation) {
         case CYDR_PANEL_ST7796: _initST7796(); break;
         default:                  _initILI9341(); break;
     }
+    _cmd(_invert ? 0x21 : 0x20);           // INVON / INVOFF
     setRotation(rotation);
+    _readback = _probeReadback();          // before the backlight: unseen
+    _cydr_activeReadback = _readback;
 
     // Backlight on at full brightness.
     setBacklight(100);
@@ -536,10 +892,79 @@ bool chipguy_CYD_resistive_display::begin(uint16_t rotation) {
     return true;
 }
 
+// ── Readback check ─────────────────────────────────────────────────────────
+// Write four faint pixels -- red, green, blue, a mix -- at the top left, read
+// them back with RAMRD (0x2E) at 2 MHz, and call readback available only on
+// an exact match.  The read is a dummy byte, then 3 bytes a pixel (RGB666,
+// ILI9341 / ST7789) or 2 (RGB565, ST7796); see README-engineering.md,
+// "Readback".  On a 3-wire device the read is the half-duplex MISO phase,
+// which the peripheral takes from MOSI.  Runs in begin(), before the
+// backlight, so the pixels are never seen; the first clear covers them.
+cydr_readback_t chipguy_CYD_resistive_display::_probeReadback() {
+    static const uint16_t probe[4] = {0x1000, 0x0040, 0x0002, 0x5AA5};
+    alignas(4) static uint8_t buf[16];     // static: DMA-capable internal RAM
+    const int bpp = _panel == CYDR_PANEL_ST7796 ? 2 : 3;
+    const int n = (1 + 4 * bpp + 3) & ~3;
+
+    uint8_t px[8];
+    for (int i = 0; i < 4; i++) { px[2 * i] = probe[i] >> 8; px[2 * i + 1] = probe[i]; }
+    _setAddrWindow(0, 0, 3, 0);
+    _data(px, sizeof px);
+    _setAddrWindow(0, 0, 3, 0);            // ends with RAMWR, which RAMRD replaces
+
+    memset(buf, 0, sizeof buf);
+    spi_device_acquire_bus(_spi, portMAX_DELAY);
+    spi_transaction_t t = {};
+    t.length = 8;
+    t.flags = SPI_TRANS_USE_TXDATA | SPI_TRANS_CS_KEEP_ACTIVE;
+    t.tx_data[0] = 0x2E;                   // RAMRD
+    t.user = (void *)0;
+    t.override_freq_hz = 2000000;
+    spi_device_polling_transmit(_spi, &t);
+    t = {};
+    if (_cydr_panelSdaOnly) { t.length = 0; t.rxlength = n * 8; }
+    else                      t.length = n * 8;
+    t.rx_buffer = buf;
+    t.user = (void *)1;
+    t.override_freq_hz = 2000000;
+    spi_device_polling_transmit(_spi, &t);
+    spi_device_release_bus(_spi);
+    _cmd(0x00);                            // NOP at the write clock again
+
+    bool ok = true;
+    const uint8_t *in = buf + 1;
+    for (int i = 0; i < 4; i++) {
+        uint16_t v;
+        if (bpp == 3) { v = (in[0] >> 3) << 11 | (in[1] >> 2) << 5 | in[2] >> 3; in += 3; }
+        else          { v = in[0] << 8 | in[1]; in += 2; }
+        ok &= v == probe[i];
+    }
+    if (ok) return _cydr_panelSdaOnly ? CYDR_READBACK_SDA : CYDR_READBACK_MISO;
+    if (_cydr_panelSdaOnly) {              // expected to work: say what came back
+        Serial.printf("cydr display: readback on SDA failed:");
+        for (int i = 0; i < n; i++) Serial.printf(" %02X", buf[i]);
+        Serial.println();
+    }
+    return CYDR_READBACK_NONE;
+}
+
+bool cydr_readbackNeedsTouchLock() {
+    return _cydr_activeReadback == CYDR_READBACK_MISO &&
+           cydr_activeTouchChip() != CYDR_TOUCH_XPT2046;
+}
+
+const char *chipguy_CYD_resistive_display::readbackName() const {
+    switch (_readback) {
+        case CYDR_READBACK_MISO: return "GPIO12";
+        case CYDR_READBACK_SDA:  return "shared GPIO13";
+        default:                 return "unavailable";
+    }
+}
+
 void chipguy_CYD_resistive_display::setRotation(uint16_t rotation) {
     _waitPixelDone();           // bus must be idle before we send a command
     _rotation = cydr_normalize_rotation(rotation);
-    uint8_t madctl = CYDR_MADCTL_BGR;
+    uint8_t madctl = 0;
 
     switch (_rotation) {
         case 0:  // portrait, native
@@ -563,13 +988,115 @@ void chipguy_CYD_resistive_display::setRotation(uint16_t rotation) {
             _h = _nativeW;
             break;
     }
-    // The ST7789 panel is RGB, and its columns run the other way.  The ST7796
-    // uses the ILI9341 table as is.
-    if (_panel == CYDR_PANEL_ST7789)
-        madctl = (madctl & ~CYDR_MADCTL_BGR) ^ ILI9341_MADCTL_MX;
+    // The table is the ILI9341's, whose rotation 0 sets MX.  A panel whose
+    // rotation 0 doesn't (the ST7789: its columns run the other way) flips MX
+    // in every rotation, and one whose rows run the other way flips MY.  The
+    // ST7796 uses the table as is.  _mx0 / _my0 / _bgr come from the panel or
+    // the overrides (see begin()).
+    if (!_mx0) madctl ^= ILI9341_MADCTL_MX;
+    if (_my0)  madctl ^= ILI9341_MADCTL_MY;
+    if (_bgr)  madctl |= CYDR_MADCTL_BGR;
+    _madctl = madctl;
 
     _cmd(0x36);          // MADCTL
     _data8(madctl);
+}
+
+void chipguy_CYD_resistive_display::setColorOrder(bool bgr) {
+    _bgr = bgr;
+    setRotation(_rotation);
+}
+
+void chipguy_CYD_resistive_display::setInversion(bool on) {
+    _waitPixelDone();
+    _invert = on;
+    _cmd(on ? 0x21 : 0x20);
+}
+
+void chipguy_CYD_resistive_display::setMirror(bool mx, bool my) {
+    _mx0 = mx; _my0 = my;
+    setRotation(_rotation);
+}
+
+void chipguy_CYD_resistive_display::autoValues(cydr_overrides_t &o) const {
+    o = _auto;
+    if (!_panelGuessed) o.panel = 0;
+    else if (!o.panel) o.panel = _panel;
+    o.spiClock = 0;                       // auto is 40 MHz, neither of the two choices
+}
+
+const char *chipguy_CYD_resistive_display::powerOffHint() const {
+    switch (_powerKey) {
+        case CYDR_PWRKEY_DOUBLE_PRESS: return "press SW1 twice quickly";
+        case CYDR_PWRKEY_LONG_HOLD:    return "hold SW1 for 10 s";
+        case CYDR_PWRKEY_EITHER:       return "hold SW1 for 10 s, or press it twice quickly";
+        default:                       return nullptr;
+    }
+}
+
+int8_t chipguy_CYD_resistive_display::gpio34IsBattery() const {
+    if (_ovr.gpio34) return _ovr.gpio34 == 2;
+    return _cydr_gpio34FromModel(_model);
+}
+
+static int8_t _cydr_gpio34FromModel(cydr_model_t m) {
+    switch (m) {
+        case CYDR_MODEL_32E_28: case CYDR_MODEL_32E_32: case CYDR_MODEL_32E_35_40:
+            return 1;
+        case CYDR_MODEL_UNKNOWN:
+            return -1;
+        default:
+            return 0;
+    }
+}
+
+// ── Overrides in NVS ───────────────────────────────────────────────────────
+// One blob, so the set is written and read as a unit.  Fields are only ever
+// appended, so a shorter blob (saved by an earlier library version) is read
+// as far as it goes and the rest is AUTO; a longer one (a later version) is
+// ignored.
+#define CYDR_OVR_NS  "cydrforce"
+#define CYDR_OVR_KEY "v1"
+
+bool cydr_anyOverride(const cydr_overrides_t &o) {
+    const uint8_t *p = (const uint8_t *)&o;
+    for (size_t i = 0; i < sizeof o; i++) if (p[i]) return true;
+    return false;
+}
+
+bool cydr_loadOverrides(cydr_overrides_t &o) {
+    o = {};
+    Preferences prefs;
+    if (!prefs.begin(CYDR_OVR_NS, /*readOnly=*/true)) return false;
+    size_t n = prefs.getBytesLength(CYDR_OVR_KEY);
+    if (n > 0 && n <= sizeof o) prefs.getBytes(CYDR_OVR_KEY, &o, n);
+    prefs.end();
+    // Anything out of range reads as AUTO: panel takes 1..3, model and size
+    // their lists, the rest 1..2.
+    uint8_t *p = (uint8_t *)&o;
+    for (size_t i = 0; i < sizeof o; i++) {
+        uint8_t max = i == offsetof(cydr_overrides_t, panel) ? 3 :
+                      i == offsetof(cydr_overrides_t, model) ? CYDR_MODEL_COUNT - 1 :
+                      i == offsetof(cydr_overrides_t, size)  ? sizeof cydr_sizeTenths - 1 :
+                      i == offsetof(cydr_overrides_t, powerKey) ? CYDR_PWRKEY_EITHER : 2;
+        if (p[i] > max) p[i] = 0;
+    }
+    return cydr_anyOverride(o);
+}
+
+void cydr_saveOverrides(const cydr_overrides_t &o) {
+    Preferences prefs;
+    if (!prefs.begin(CYDR_OVR_NS, /*readOnly=*/false)) return;
+    if (cydr_anyOverride(o)) prefs.putBytes(CYDR_OVR_KEY, &o, sizeof o);
+    else                     prefs.remove(CYDR_OVR_KEY);
+    prefs.end();
+}
+
+void cydr_clearOverrides() {
+    Preferences prefs;
+    if (!prefs.begin(CYDR_OVR_NS, /*readOnly=*/false)) return;
+    prefs.remove(CYDR_OVR_KEY);
+    prefs.end();
 }
 
 void chipguy_CYD_resistive_display::setBacklight(int percentage) {

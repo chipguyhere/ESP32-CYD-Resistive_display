@@ -25,7 +25,11 @@ All are a classic **ESP32** (not S3) with **4 MB flash, no PSRAM**. Build for
 | **ESP32-32E 3.5"** | silkscreen *3.5" LCD Display / ESP32-32E 320x480 / Resistance Touch* | shared touch | ST7796, 320×480 |
 | **ESP32-32E 4.0"** | silkscreen *4.0" LCD Display / ESP32-32E 320x480 / Resistance Touch* | shared touch | ST7796, 320×480 |
 | **ESP32-024** | 2.4"; "ESP32-024" in the copper on the back; battery connector; three buttons (RST, BOOT, SW1) | shared touch | ST7789 or ILI9341, 240×320 |
-| **ESP32-035** | 3.5"; "ESP32-035" in the copper on the back; light sensor; three buttons (RST, BOOT, SW1) | shared touch | ST7796, 320×480 |
+| **ESP32-035** | 3.5"; "ESP32-035" in the copper on the back (some units also "HW-951", front and back); light sensor; three buttons (RST, BOOT, SW1) | shared touch | ST7796, 320×480 |
+| **ESP32-2432S032** | 3.2"; sold as ESP32-2432S032 (resistive) or ESP32-2432S032C (capacitive, GT911); battery connector; three buttons (RST, BOOT, SW1) | shared touch (the C: GT911 on I²C) | ST7789, 240×320 |
+| **ESP32-2432S024C** | 2.4", capacitive; "ESP32-2432S024" on the back | backlight 27, CST820 on I²C | ILI9341, 240×320 |
+| **Guition JC2432W328** | 2.8", capacitive; "JC2432W328" on the back; laid out like a smaller ESP32-2432S032 | backlight 27, CST820 on I²C | ST7789, 240×320 |
+| **ESP32-3248S035C** | 3.5", capacitive; sold as ESP32-3248S035C; micro-USB only; no battery connector | backlight 27, GT911 on I²C (an XPT2046 is fitted too, with no touch film) | ST7796, 320×480 |
 
 What else each one has, by `display.model()` (the `BoardDetect` example shows it):
 
@@ -37,6 +41,9 @@ What else each one has, by `display.model()` (the `BoardDetect` example shows it
 | `CYDR_MODEL_32E_35_40` | **yes** | **GPIO34** = cell ÷ 2 | no | yes | **yes**, GPIO4, LOW = on |
 | `CYDR_MODEL_024` | **yes** | none | **yes**, GPIO34 | yes | no — always on |
 | `CYDR_MODEL_035` | **yes** (SW1, as the ESP32-024) | none | **yes**, GPIO34 | yes | no — GPIO4 is the red LED |
+| `CYDR_MODEL_2432S032`, `_2432S032C` | **yes** (SW1; off by double press or 10-s hold, by IP5306 variant — [README-power.md](README-power.md)) | none | **yes**, GPIO34 | yes | no — always on (schematic) |
+| `CYDR_MODEL_3248S035C` | no — micro-USB only | N/A | **yes** (photoresistor fitted; GPIO34 reads 142 mV in room light) — dark reading **TODO (bench)** | **TODO (bench)** | **TODO (bench)** |
+| `CYDR_MODEL_2432S024C`, `_JC2432W328` | **yes** (SW1; off by a 10-s hold on both — [README-power.md](README-power.md)) | **TODO (bench)** | likely — GPIO34 reads 142 mV in room light, as on the other light-sensor boards; **TODO (bench)** | **TODO (bench)** | no — GPIO4 is the red LED |
 
 All four 32E boards read the same battery the same way: one charged cell moved to
 connector to connector read 2.07 V on GPIO34 on each, about 4.14 V at the cell; with no
@@ -58,8 +65,15 @@ Touch* — shown here with `/` between them.
 
 **Own touch** means the XPT2046 touch chip has its own pins and the backlight is on
 GPIO21. **Shared touch** means the touch chip sits on the display's SPI bus and the
-backlight is on GPIO27. Capacitive-touch CYDs (e.g. ESP32-2432S032C) are **not**
-supported — see [README-board-detection.md](README-board-detection.md#capacitive-boards-fool-these-checks).
+backlight is on GPIO27. A capacitive touch chip sits on the touch panel's flex cable,
+not on the board, so a board has one only when a capacitive panel is fitted. Four
+capacitive-touch boards are supported: the
+ESP32-2432S032C and ESP32-3248S035C (GT911), and the ESP32-2432S024C and the JC2432W328
+(both CST820). The touch
+driver reads their touch chip over I²C on SDA 33 / SCL 32. On those boards **GPIO32 and
+33 are taken**, and the backlight is GPIO27. A capacitive chip on another board is
+still driven, but the board is reported as unknown — see
+[README-board-detection.md](README-board-detection.md#capacitive-boards).
 
 **USB-C cables (32E 2.8").** The board's USB-C socket has a wiring shortcut that makes it
 look like an audio accessory to "smart" (e-marked) cables, which then refuse to power
@@ -74,10 +88,10 @@ Four panel setups turn up across these boards:
 
 | Panel | Size | Found on | Notes |
 |---|---|---|---|
-| ILI9341 | 240×320 | 2432S028, 32E 2.8", ESP32-024 | BGR color order |
-| ST7789 | 240×320 | 2432S028, 32E 2.8", ESP32-024 | RGB, columns the other way; color inversion **off** |
-| ST7789 | 240×320 | 32E 3.2" | as above, but color inversion **on** |
-| ST7796 | 320×480 | 32E 3.5", 4.0", ESP32-035 | BGR |
+| ILI9341 | 240×320 | 2432S028, 32E 2.8", ESP32-024, 2432S024C | BGR color order |
+| ST7789 | 240×320 | 2432S028, 32E 2.8", ESP32-024, JC2432W328 | RGB, columns the other way; color inversion **off** |
+| ST7789 | 240×320 | 32E 3.2", ESP32-2432S032 | as above, but color inversion **on**. The 2432S032's panel has no data-out wire, so it is identified by reading its data-in line back |
+| ST7796 | 320×480 | 32E 3.5", 4.0", ESP32-035, ESP32-3248S035C | BGR. The 3248S035C's panel answers no ID read, so it is taken from the wiring |
 
 Driving one with another's settings gives a mirror-image picture with red and blue
 swapped, or inverse video (white background, cyan for red). `display.begin()` works
@@ -96,11 +110,15 @@ display.panel();       // CYDR_PANEL_ILI9341 / _ST7789 / _ST7796, after begin()
 display.panelName();   // "ILI9341" / "ST7789" / "ST7796"
 display.board();       // CYDR_BOARD_OWN_TOUCH or CYDR_BOARD_SHARED_TOUCH
 display.nativeWidth(); // 240 or 320 (nativeHeight(): 320 or 480)
-display.redLedPin();   // 4 (2432S028, ESP32-024, ESP32-035) or 22 (every ESP32-32E board)
+display.redLedPin();   // 4 (2432S028, ESP32-024, ESP32-035, 2432S032) or 22 (every ESP32-32E board)
 display.greenLedPin(); // 16, or 17 on the ESP32-024 / -035
 display.blueLedPin();  // 17, or 16 on the ESP32-024 / -035
-display.model();       // CYDR_MODEL_024, _035, _2432S028, _32E_28, _32E_32, _32E_35_40
+display.model();       // CYDR_MODEL_024, _035, _2432S028, _2432S032, _2432S032C, _2432S024C,
+                       //   _JC2432W328, _3248S035C, _32E_28, _32E_32, _32E_35_40
 display.modelName();   // "ESP32-024 2.4\"", ...
+display.diagonalTenths(); // 24, 28, 32, 35, 40; 0 for the 32E 3.5" / 4.0" unless the size override names it
+display.touchChip();   // CYDR_TOUCH_XPT2046, _GT911 or _CST820
+display.powerOffHint(); // "hold SW1 for 10 s", ... or nullptr — README-power.md
 display.setPanel(CYDR_PANEL_ST7789);   // before begin(): skip panel detection, force a type
 ```
 
@@ -117,14 +135,24 @@ detection, corner colors and touch targets in rotations 0 and 1, and an SD mount
 all passed. On 2026-10-23, six boards (32E 2.8" ILI9341 and ST7789, 3.2", two 3.5"/4.0",
 ESP32-035): all four rotations draw correctly, touch follows in each, and every board
 turns the picture the same way — clockwise from 0 to 1, as LVGL, TFT_eSPI and
-Arduino_GFX do on the same panel. **TODO (bench):** rotations 2 and 3 on the 2432S028
-and ESP32-024; `TouchCalibrate` on the ESP32-024 and ESP32-035.
+Arduino_GFX do on the same panel. On 2026-10-29, ten boards at once (2432S028 ILI9341,
+32E 2.8" ILI9341 and ST7789, 3.2", 3.5", both ESP32-024s, ESP32-035, 2432S032 and
+2432S032C): model and panel detection all correct. `LvglRotation` on the 2432S028, both
+ESP32-024s, the 2432S032 and the 2432S032C: all four rotations draw correctly and touch
+follows in each. `TouchCalibrate` on the 2432S028, both ESP32-024s, the ESP32-035 and the
+2432S032 (all accepted; done quickly, some through the protective film, so the fit
+figures say nothing about the boards),
+and on the C (no calibration, straight to the drawing test). On 2026-10-31, an
+ESP32-2432S024C and a JC2432W328: model, panel and CST820 detected, the screen lit, and
+touch follows the finger in `BoardDetect`. On 2026-11-02, three more: a second
+2432S032 (resistive) and a second ESP32-035 (this one also marked "HW-951") were named
+correctly with no change; an ESP32-3248S035C is named since that day, with the
+screen and touch right in `BoardDetect`. **TODO (bench):** a 2432S028 with the ST7789
+panel; `LvglRotation` and `TouchCalibrate` on the two CST820 boards and the 3248S035C.
 
-**GPIO12 is not a display reset** on the 2.8" boards: holding it LOW did nothing to
-either panel. The driver issues a software reset instead. Where the panel's hardware
-reset goes is **TODO (bench)** — on the 2432S028 it's the ESP32's EN, so the RST button
-resets the screen too. Details in
-[README-engineering.md](README-engineering.md#display-panel-variants).
+**The panel has no reset pin of its own.** Its reset is tied to the ESP32's EN, so the
+RST button resets the screen too (the 2432S028's schematic; inferred on the others), and
+the driver starts each panel with a software reset.
 
 ## Connectors
 
@@ -238,9 +266,10 @@ other way from the 32E 3.5"'s; the library handles it. "ESP32-035" is in the cop
 the back. What one unit showed on USB power (2026-10-23):
 
 - **SW1** changed no GPIO and didn't reset the ESP32 (every free pin watched under
-  both pulls, plus ADC on 34 / 35 / 36 / 39). Like the ESP32-024's, it is presumably
-  the battery chip's key — **TODO (bench):** what it does on battery alone, and which
-  charger chip is fitted.
+  both pulls, plus ADC on 34 / 35 / 36 / 39). It is the battery chip's key and behaves
+  as the ESP32-024's: on battery alone the board stays off until one press of SW1,
+  and two quick presses turn it off (2026-10-23;
+  [details](README-power.md)). **TODO (bench):** which charger chip is fitted.
 - **GPIO21** is pulled up on the board (as on the ESP32-024); 22, 25 and 26 float; 0, 5,
   19, 23, 32 and 33 are pulled up. **TODO (bench):** whether 21 / 22 / 35 reach a header
   as on the ESP32-024.
@@ -248,7 +277,7 @@ the back. What one unit showed on USB power (2026-10-23):
   LED left dark — the amplifier is always on, as on the ESP32-024. All four rotations
   draw and track touch correctly (2026-10-23).
 - The 2-pin MX1.25 battery connector's silkscreen polarity matches the other boards'.
-  **TODO (bench):** `TouchCalibrate`; running on battery.
+  It runs `MP3Player` on battery (2026-10-23). **TODO (bench):** `TouchCalibrate`.
 
 **ESP32-2432S028 in short.** No battery and no power management: it runs from USB or
 5 V on its P1 header's VIN pin, and its regulators and USB chip keep drawing several mA
@@ -269,6 +298,53 @@ ESP32-2432S024. It replaces the older `chipguy_cyd2432S024_display` library. Its
 **CN1** header is an I²C port on IO21 / IO22 with 3.3V, so an I²C sensor plugs straight in;
 nothing answered with the header empty. The panel's reset is tied to the ESP32's, so
 RST resets the screen too.
+
+**ESP32-2432S032 in short.** Built like the ESP32-024 around a 3.2" ST7789: backlight
+on GPIO27, touch on the display bus, red / green / blue LED on 4 / 16 / 17 (confirmed
+on the C), a light sensor on GPIO34, an amplifier on GPIO26 that is always on, a
+battery connector with an IP5306 charger whose power key is SW1, and no battery
+reading (schematic, *ESP32-2432S032-MCU-V1.0* and *-LCM-V1.0*). SW1 turns the board on
+with one press and off with either two quick presses or a 10-second hold, depending on
+the IP5306 variant fitted ([details](README-power.md)). `MP3Player` mounts the card and plays through the
+speaker on both, the amplifier needing no switch (2026-10-29). The screen needs color
+inversion on, as on the 3.2", and touch is laid out as on the 3.2", both axes reversed.
+**CN1** carries 3.3V, IO21 (10 kΩ pull-up), IO22, GND and **P3** IO21, IO22, IO35, GND,
+as on the ESP32-024. The **2432S032C** is the same PCB with a GT911 on I²C — SDA 33,
+SCL 32, RST 25 — in place of the XPT2046. Its INT would reach IO21 through R25, which
+isn't fitted, so IO21 stays free on the C too. The touch driver runs it on `Wire1`,
+so `Wire` stays free for a sensor on CN1. On the C, **GPIO33 is the touch's I²C data
+line, not a free pin**. One resistive unit's RGB LED never lit on any of its three pins
+(2026-10-29), taken to be a fault in that unit.
+[Details](README-engineering.md#the-esp32-2432s032).
+
+**ESP32-2432S024C and JC2432W328 in short.** Both are 240×320 boards with a CST820
+capacitive touch chip on I²C: SDA 33, SCL 32, address `0x15`. The touch driver runs it
+on `Wire1` and leaves `Wire` free. The backlight is on GPIO27, and the RGB LED is red / green / blue on 4 / 16 / 17
+(seen on both). Both have an SW1 power key, as on the ESP32-2432S032.
+The 2432S024C has an ILI9341. On it, GPIO21 is the touch chip's interrupt line, so treat
+21 as taken. The JC2432W328 has an ST7789 with color inversion off, and its parts are
+laid out like a smaller ESP32-2432S032. One unit of each was checked, 2026-10-31.
+Both carry what looks like the 2432S032's IP5306 power chip ([README-power.md](README-power.md)). **TODO (bench):** the battery reading, the amplifier, the headers,
+and where the JC2432W328's touch interrupt goes.
+[Details](README-engineering.md#the-cst820-boards).
+
+**ESP32-3248S035C in short.** A 3.5" 320×480 ST7796 board with a GT911 capacitive
+touch chip on I²C (SDA 33, SCL 32, address `0x5D`), backlight on GPIO27, and power
+from micro-USB only — no battery connector, charger or power key. The touch driver
+runs it on `Wire1` and leaves `Wire` free. A photoresistor is fitted on GPIO34.
+An **XPT2046 is also fitted** and answers on the display bus with CS on GPIO33, but
+no resistive film is attached, so it reads nothing useful. Because its CS is the
+GT911's SDA line, **leave GPIO33 to the touch driver**. The screen can't be asked for
+its ID, so the library goes by the wiring and the GT911. An RGB LED is fitted, but on
+the one unit checked (2026-11-02) nothing lit it, with GPIO 4, 16, 17, 22, 5, 18, 19
+and 23 each driven LOW and HIGH. The library reports the vendor's 4 / 16 / 17.
+**R24 is unfitted**, so the screen can't be read back, and the text terminal's cursor
+over old text blinks to the background color instead
+([README-terminal.md](README-terminal.md#the-cursor)). A solder bridge across R24's
+pads restores readback on GPIO12. The library detects it, and the board is still
+named correctly (one unit, 2026-11-02).
+**TODO (bench):** the LED's pins on another unit; sound; the headers; the card slot.
+[Details](README-engineering.md#the-esp32-3248s035c).
 
 **The shared-touch boards free three pins** the own-touch boards spend on touch:
 GPIO25, 32 and 39. Whether they reach a header — and so whether they are actually
