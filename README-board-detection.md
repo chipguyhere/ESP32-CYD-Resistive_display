@@ -27,7 +27,7 @@ the sketch can ask for each one afterwards. Together they name the board:
 | ESP32-2432S032C | `CYDR_MODEL_2432S032C` | GT911 touch on I²C, backlight 27 | ST7789, 240×320 | **4** | the red LED |
 | ESP32-2432S024C | `CYDR_MODEL_2432S024C` | CST820 touch on I²C, backlight 27 | ILI9341, 240×320 | **4** | the red LED |
 | Guition JC2432W328 | `CYDR_MODEL_JC2432W328` | CST820 touch on I²C, backlight 27 | ST7789, 240×320 | **4** | the red LED |
-| ESP32-3248S035C | `CYDR_MODEL_3248S035C` | GT911 touch on I²C, backlight 27 | ST7796, 320×480 | **4** (vendor pinout; **TODO (bench)**) | the red LED |
+| ESP32-3248S035C | `CYDR_MODEL_3248S035C` | GT911 touch on I²C, backlight 27 | ST7796, 320×480 | **4** | the red LED |
 
 The size override in `TouchCalibrate` can say which of the 3.5" and 4.0" a board is.
 The model override can name any board outright

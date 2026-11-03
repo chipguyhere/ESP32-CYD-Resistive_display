@@ -727,10 +727,10 @@ bool chipguy_CYD_resistive_display::begin(uint16_t rotation) {
                _board == CYDR_BOARD_SHARED_TOUCH) {
         // The ESP32-3248S035C.  Its ST7796 answers no ID read on GPIO12 or on
         // SDA, so the panel is the shared-touch guess; the GT911 (0x5D) names
-        // the board (bench, 2026-11-02).  The vendor puts the RGB LED on
-        // 4 / 16 / 17, but GPIO4 only follows the internal pulls (0.13 V
-        // with the pull-down, so the voltage test would call it a failed
-        // read), and on the unit seen no pin lit its LED.  Clear the reset
+        // the board (bench, 2026-11-02).  The RGB LED is on 4 / 16 / 17; on
+        // the unit seen it is dead (open), and GPIO4 then reads 0.13 V with
+        // the pull-down, which the voltage test would call a failed read --
+        // so, as on the 2432S032, the pin isn't measured.  Clear the reset
         // pull-down as the voltage test would have.
         if (_cydr_redLed < 0) _cydr_redLed = 4;
         gpio_set_pull_mode(GPIO_NUM_4, GPIO_FLOATING);
@@ -851,6 +851,9 @@ bool chipguy_CYD_resistive_display::begin(uint16_t rotation) {
     // so any partial flush region fits in one queued transaction.
     buscfg.max_transfer_sz = (int)_nativeW * _nativeH * 2;
 
+    // The bus's interrupt is allocated on the core that initializes it; a
+    // task that queues transfers should run there too (spiCore()).
+    _spiCore = xPortGetCoreID();
     esp_err_t err = spi_bus_initialize(CYDR_TFT_SPI_HOST, &buscfg, SPI_DMA_CH_AUTO);
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
         Serial.printf("cydr display: spi_bus_initialize failed: 0x%x\n", err);
@@ -928,8 +931,16 @@ cydr_readback_t chipguy_CYD_resistive_display::_probeReadback() {
     t.user = (void *)1;
     t.override_freq_hz = 2000000;
     spi_device_polling_transmit(_spi, &t);
+    // NOP at the write clock.  override_freq_hz sticks to the device for the
+    // transactions after it, so the write clock has to be set back explicitly.
+    t = {};
+    t.length = 8;
+    t.flags = SPI_TRANS_USE_TXDATA;
+    t.tx_data[0] = 0x00;
+    t.user = (void *)0;
+    t.override_freq_hz = _spiHz;
+    spi_device_polling_transmit(_spi, &t);
     spi_device_release_bus(_spi);
-    _cmd(0x00);                            // NOP at the write clock again
 
     bool ok = true;
     const uint8_t *in = buf + 1;

@@ -434,11 +434,15 @@ GPIO33 as SPI chip select and leave the GT911's SDA in that state.
 | 36 | 3134 mV | pulled high — on the resistive boards the XPT2046's PENIRQ, which idles high |
 | 0, 5, 19, 23 | 1 / 1 | pulled up (BOOT; card-slot CS / MISO / MOSI) |
 
-**The RGB LED.** One is fitted, but driving GPIO 4, 16, 17, 22, 5, 18, 19 and 23 LOW
-and then HIGH lit nothing. GPIO4's 128 mV under the pull-down matches the dead-LED
-2432S032 unit, not the ~1.6 V an LED to 3.3 V gives. So this LED has no supply path,
-either from an unfitted resistor or a fault. The model reports the vendor's 4 / 16 / 17,
-as it does for the 2432S032. **TODO (bench):** a second unit.
+**The RGB LED** is common-anode, the anodes tied to 3.3 V through resistors and the
+cathodes on GPIO 4 / 16 / 17, as on the 2432S032. On the bench unit (MAC `…8D:F8:B0`)
+the LED itself is faulty, a defect of that unit rather than of the design
+(2026-11-02, meter): with blue commanded on, the full 3.3 V stands across it, where a
+working board's lit blue LED drops 2.7 V. With the sketch doing nothing it reads 0 V
+across, and the resistor side reads 3.3 V to ground for all three colors. So the
+cathode side is driven LOW as commanded and no current flows: the die is open. It's the
+same signature as the dead-LED 2432S032 unit: GPIO4 reads 0.13 V under the internal
+pull-down instead of the ~1.6 V a working LED gives.
 
 ### Light sensor
 
@@ -1139,9 +1143,18 @@ that case.
 The task's stack is 2,560 bytes; the most it has used in any example is 1,316
 (`stackHighWater()` reports the margin). Static RAM: cells 120 B, DMA buffer 1,280 B,
 stack, TCB and two semaphores — about 4.5 KB in all, with no heap use after
-`begin()`. The task runs at priority 10 on either core. It holds the SPI bus for each
-step (`spi_device_acquire_bus`), so the shared-touch boards' XPT2046 reads wait at most
-one step.
+`begin()`. The task runs at priority 10 on the core the SPI bus's interrupt was
+allocated on, `display.spiCore()` (the core `display.begin()` ran on; override with
+`CYDR_TERM_TASK_CORE`). It holds the SPI bus for each step (`spi_device_acquire_bus`)
+and queues DMA under it, so the shared-touch boards' XPT2046 reads wait at most one
+step. With the task free to run on the other core, `TerminalScrollSpeed` crashed
+within seconds of most starts on an ESP32-2432S032: the SPI interrupt found a pending
+bus acquire with no acquiring device recorded and faulted in `spi_bus_lock_bg_exit()`
+(`LoadProhibited`, address 0). With the task on the interrupt's core it ran clean
+(2026-11-02). IDF's bus lock is meant to work across cores, so this is either a race
+in it or a usage pattern of ours (acquire, queued DMA, polled commands in between)
+that it only mishandles across cores. **TODO:** a minimal repro to tell which. Same-core scroll speeds: 122 / 58 lines/s fast / clean
+at 240 wide, 97 / 49 at 320 wide.
 
 ---
 

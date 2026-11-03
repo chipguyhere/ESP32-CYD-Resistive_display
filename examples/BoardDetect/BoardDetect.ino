@@ -187,7 +187,7 @@ static void buildScreen() {
     }
     addLine(String("Backlight: GPIO") + display.backlightPin());
     // Whether pixels can be read back from the panel, and on which pin.
-    addLine(String("Display readback: ") + display.readbackName());
+    addLine(String("Display read: ") + display.readbackName());
     auto pin = [](int8_t p) { return p < 0 ? String("?") : String(p); };
     addLine("R/G/B LED: GPIO" + pin(display.redLedPin()) + "/" +
             pin(display.greenLedPin()) + "/" + pin(display.blueLedPin()));

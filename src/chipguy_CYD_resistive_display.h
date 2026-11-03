@@ -403,6 +403,12 @@ public:
     // bottom-to-top on screen).  The text terminal's scrolling needs it.
     bool rowsReversed() const { return _madctl & 0x80; }
     uint32_t spiClock() const { return _spiHz; }
+    // The core the SPI bus's interrupt runs on (the one begin() ran on).  A
+    // task that holds the bus with spi_device_acquire_bus() and queues
+    // transfers should run on this core: from the other core the text
+    // terminal crashed in spi_bus_lock_bg_exit() on an ESP32-2432S032
+    // (2026-11-02); see README-engineering.md, "Resources".
+    int spiCore() const { return _spiCore; }
     int8_t backlightPin() const { return _blPin; }
 
     // Where the XPT2046 is wired: CYDR_BOARD_OWN_TOUCH or _SHARED_TOUCH.
@@ -471,6 +477,7 @@ private:
     bool    _useOverrides = true, _panelGuessed = false;
     cydr_readback_t _readback = CYDR_READBACK_NONE;
     uint32_t _spiHzForced = 0, _spiHz = 40000000;
+    int      _spiCore = 1;
     cydr_overrides_t _ovr = {};
     cydr_overrides_t _auto = {};
 

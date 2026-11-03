@@ -313,8 +313,7 @@ as on the ESP32-024. The **2432S032C** is the same PCB with a GT911 on I²C — 
 SCL 32, RST 25 — in place of the XPT2046. Its INT would reach IO21 through R25, which
 isn't fitted, so IO21 stays free on the C too. The touch driver runs it on `Wire1`,
 so `Wire` stays free for a sensor on CN1. On the C, **GPIO33 is the touch's I²C data
-line, not a free pin**. One resistive unit's RGB LED never lit on any of its three pins
-(2026-10-29), taken to be a fault in that unit.
+line, not a free pin**.
 [Details](README-engineering.md#the-esp32-2432s032).
 
 **ESP32-2432S024C and JC2432W328 in short.** Both are 240×320 boards with a CST820
@@ -335,15 +334,14 @@ runs it on `Wire1` and leaves `Wire` free. A photoresistor is fitted on GPIO34.
 An **XPT2046 is also fitted** and answers on the display bus with CS on GPIO33, but
 no resistive film is attached, so it reads nothing useful. Because its CS is the
 GT911's SDA line, **leave GPIO33 to the touch driver**. The screen can't be asked for
-its ID, so the library goes by the wiring and the GT911. An RGB LED is fitted, but on
-the one unit checked (2026-11-02) nothing lit it, with GPIO 4, 16, 17, 22, 5, 18, 19
-and 23 each driven LOW and HIGH. The library reports the vendor's 4 / 16 / 17.
+its ID, so the library goes by the wiring and the GT911. The RGB LED is red / green /
+blue on 4 / 16 / 17, active LOW, as on the 2432S032.
 **R24 is unfitted**, so the screen can't be read back, and the text terminal's cursor
 over old text blinks to the background color instead
 ([README-terminal.md](README-terminal.md#the-cursor)). A solder bridge across R24's
 pads restores readback on GPIO12. The library detects it, and the board is still
 named correctly (one unit, 2026-11-02).
-**TODO (bench):** the LED's pins on another unit; sound; the headers; the card slot.
+**TODO (bench):** sound; the headers; the card slot.
 [Details](README-engineering.md#the-esp32-3248s035c).
 
 **The shared-touch boards free three pins** the own-touch boards spend on touch:

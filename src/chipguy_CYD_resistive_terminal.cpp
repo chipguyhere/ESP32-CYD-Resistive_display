@@ -198,7 +198,8 @@ bool chipguy_CYD_resistive_terminal::begin(chipguy_CYD_resistive_display &displa
     _task = xTaskCreateStaticPinnedToCore(_taskEntry, "cydr_term",
                                           sizeof(_stack),   // bytes, in ESP-IDF's FreeRTOS
                                           this, CYDR_TERM_TASK_PRIORITY, _stack, &_tcb,
-                                          CYDR_TERM_TASK_CORE);
+                                          CYDR_TERM_TASK_CORE >= 0 ? CYDR_TERM_TASK_CORE
+                                                                   : display.spiCore());
     if (!_task) return false;
     flush();
     return true;

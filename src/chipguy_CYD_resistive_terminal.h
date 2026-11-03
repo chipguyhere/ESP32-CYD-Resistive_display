@@ -77,13 +77,15 @@
 #ifndef CYDR_TERM_STACK_BYTES
 #define CYDR_TERM_STACK_BYTES 2560
 #endif
-// Task priority (the Arduino loop task runs at 1) and core (tskNO_AFFINITY =
-// either core).
+// Task priority (the Arduino loop task runs at 1) and core.  The default,
+// -1, is the core the display's SPI interrupt runs on (display.spiCore()):
+// the task holds the bus and queues transfers, and from the other core that
+// crashed inside ESP-IDF's bus lock (README-engineering.md, "Resources").
 #ifndef CYDR_TERM_TASK_PRIORITY
 #define CYDR_TERM_TASK_PRIORITY 10
 #endif
 #ifndef CYDR_TERM_TASK_CORE
-#define CYDR_TERM_TASK_CORE tskNO_AFFINITY
+#define CYDR_TERM_TASK_CORE -1
 #endif
 // printf() renders one number at a time with snprintf into a buffer this big
 // on the caller's stack.  %s strings never go through it.  A single number
