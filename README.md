@@ -173,6 +173,8 @@ so your real sketch picks it up automatically. See
 step: whether its screen takes double speed, how often it refreshes, and whether
 animation can run with no tearing. It explains each result on screen before the balls
 start. See [README-lvgl.md](README-lvgl.md#rasterbouncingballs--what-can-your-screen-do).
+You can also install it straight from your web browser, without the Arduino IDE:
+[CYD Raster FPS Stress Test](https://github.com/chipguyhere/CYD-Raster-FPS-Stress-Test).
 
 ---
 

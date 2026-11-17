@@ -117,6 +117,8 @@ The balls skip LVGL: each strip of them is drawn just before it's sent. Only the
 controls at the bottom are LVGL, and they wait their turn behind the balls. It uses
 about 23 KB of extra memory; `config.h` in the example has smaller and larger settings.
 How it works: [README-engineering.md, "Beam chasing"](README-engineering.md#beam-chasing).
+To try it without the Arduino IDE, install it from a web browser:
+[CYD Raster FPS Stress Test](https://github.com/chipguyhere/CYD-Raster-FPS-Stress-Test).
 
 ### LvglRotation — turning the screen while the app runs
 
