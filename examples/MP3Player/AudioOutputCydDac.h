@@ -1,10 +1,14 @@
 /*
- * AudioOutputCydDac.h - ESP8266Audio output for the resistive-touch CYD speaker.
+ * AudioOutputCydDac.h - THIS FILE ONLY APPLIES TO THE CLASSIC ESP32 CYDs.
+ * On any other chip it compiles to nothing; the ESP32-C5's output is
+ * AudioOutputC5Pdm.h.
+ *
+ * ESP8266Audio output for the classic resistive-touch CYD speaker.
  *
  * Why not the library's own AudioOutputInternalDAC?  In ESP8266Audio 2.4.1 it
  * enables DAC_CHANNEL_MASK_CH0 (GPIO25) for mono and BOTH channels for stereo,
  * and its constructor drives GPIO25 low.  On this board GPIO25 is the XPT2046
- * touch clock, so touch dies the moment audio starts.  See README-sound.md in
+ * touch clock, so touch dies the moment audio starts.  See README-sound-ESP32.md in
  * chipguy_ESP32-CYD-Resistive_display.
  *
  * This class follows that README's rules instead:
@@ -19,7 +23,7 @@
  *     11.025/16 kHz x2), with linear interpolation — plenty for an 8-bit DAC
  *     behind a 36 kHz RC filter.
  *   - Stereo is downmixed to mono; the amplifier and speaker are mono.
- *   - Full-scale output by default.  README-sound.md's inferred +/-80 ceiling
+ *   - Full-scale output by default.  README-sound-ESP32.md's inferred +/-80 ceiling
  *     was tested against real music and found unnecessary: no audible
  *     clipping at +/-127.  setMaxSwing() is still there if a board wants it.
  *   - The DAC is ramped from 0 to mid-scale before the first sample and back
@@ -58,17 +62,20 @@
 
 #pragma once
 
+#include <sdkconfig.h>
+#if defined(CONFIG_IDF_TARGET_ESP32)
+
 #include <Arduino.h>
-#include <AudioOutput.h>
 #include <driver/dac_continuous.h>
 #include <chipguy_CYD_resistive_display.h>
+#include "CydAudioOut.h"
 
-class AudioOutputCydDac : public AudioOutput {
+class AudioOutputCydDac : public CydAudioOut {
 public:
     // Peak swing around mid-scale at 100% volume, in DAC counts (max 127).
     static constexpr int kFullScaleSwing = 127;
 
-    // Amplifier shutdown: GPIO4, LOW = amplifier on.  See README-sound.md.
+    // Amplifier shutdown: GPIO4, LOW = amplifier on.  See README-sound-ESP32.md.
     static constexpr int kAmpEnablePin = 4;
 
     // The ESP32-32E boards have the shutdown pin; on the ESP32-2432S028 and ESP32-024 GPIO4
@@ -109,11 +116,11 @@ public:
 
     // 0..100.  Applied per sample, so it can be changed during playback from
     // another task (a byte store is atomic on Xtensa).
-    void setVolume(uint8_t pct) {
+    void setVolume(uint8_t pct) override {
         if (pct > 100) pct = 100;
         _volume = pct;
     }
-    uint8_t volume() const { return _volume; }
+    uint8_t volume() const override { return _volume; }
 
     // Change the amplitude ceiling (1..127).  Takes effect on the next sample.
     void setMaxSwing(int counts) {
@@ -124,7 +131,7 @@ public:
     // Amplifier on/off (GPIO4, active LOW).  Only meaningful while the DAC is
     // running; ensureRunning()/teardown() sequence it around the ramps.
     // No-op on the ESP32-2432S028 and ESP32-024, which have no such pin.
-    void setAmpEnabled(bool on) {
+    void setAmpEnabled(bool on) override {
         if (hasAmpPin()) digitalWrite(kAmpEnablePin, on ? LOW : HIGH);
         _ampOn = on;
     }
@@ -135,18 +142,20 @@ public:
 
     // TPDF dither + first-order noise shaping on the 8-bit quantizer.  Off
     // is plain round-to-nearest, for A/B listening.
-    void setDither(bool on) { _dither = on; if (!on) _err = 0; }
-    bool dither() const { return _dither; }
+    bool hasDither() const override { return true; }
+    void setDither(bool on) override { _dither = on; if (!on) _err = 0; }
+    bool dither() const override { return _dither; }
 
     // Upsampling factor in use (1 = none) and the rate the DAC is running at.
     int upsample() const { return _upsample; }
     int dacRate() const { return hertz * _upsample; }
+    int outputRate() const override { return _dac ? dacRate() : 0; }
 
     // Times the DMA chain ran empty mid-stream (the driver's on_stop event).
     // Each one is an audible click: the I2S TX clocks out zeros while it has
     // nothing to send, so the DAC steps from mid-scale to 0 V regardless of
     // volume.  Deliberate stops (flush, ramp) are excluded.
-    uint32_t underruns() const { return _underruns; }
+    uint32_t underruns() const override { return _underruns; }
 
     // ---- AudioOutput interface --------------------------------------------
 
@@ -365,3 +374,5 @@ private:
         _lastLevel = to;
     }
 };
+
+#endif  // CONFIG_IDF_TARGET_ESP32

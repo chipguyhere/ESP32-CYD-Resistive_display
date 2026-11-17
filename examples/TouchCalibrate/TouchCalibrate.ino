@@ -94,7 +94,11 @@ static const int   MIN_SAMPLES = 8;     // min samples for a valid tap
 static const float ACCEPT_RMS  = 6.0f;  // px - accept fit if RMS error <= this
 static const float ACCEPT_MAX  = 16.0f; // px - ...and worst-point error <= this
 
+#if CYDR_CHIP_C5
+#define CAL_BOOT_PIN 28         // BOOT button (GPIO28 on the ESP32-C5)
+#else
 #define CAL_BOOT_PIN 0          // BOOT button (GPIO0)
+#endif
 
 static bool gCanSkip = false;   // true once a saved calibration exists
 static bool gSkipCal = false;   // set when BOOT is pressed to skip calibration
@@ -387,7 +391,8 @@ struct OvrField {
 static const char *const kModels[] = {
     "ESP32-2432S028", "ESP32-32E 2.8\"", "ESP32-32E 3.2\"", "ESP32-32E 3.5/4.0\"",
     "ESP32-024 2.4\"", "ESP32-035 3.5\"", "ESP32-2432S032", "ESP32-2432S032C",
-    "ESP32-2432S024C", "JC2432W328 2.8\"", "ESP32-3248S035C",
+    "ESP32-2432S024C", "JC2432W328 2.8\"", "ESP32-3248S035C", "NM-CYD-C5",
+    "ES3C28P 2.8\" S3", "ES3N28P 2.8\" S3",
 };
 static_assert(sizeof kModels / sizeof kModels[0] == CYDR_MODEL_COUNT - 1,
               "kModels must list every cydr_model_t");
@@ -396,7 +401,8 @@ static const char *const kPanels[] = {"ILI9341", "ST7789", "ST7796"};
 static const char *const kRgbBgr[] = {"RGB", "BGR"};
 static const char *const kOffOn[] = {"off", "on"};
 static const char *const kClearSet[] = {"clear", "set"};
-static const char *const kClocks[] = {"27 MHz", "20 MHz"};
+// 80 MHz: the speed test (Settings) checks whether this board can take it.
+static const char *const kClocks[] = {"27 MHz", "20 MHz", "80 MHz"};
 static const char *const kBacklights[] = {"GPIO21", "GPIO27"};
 static const char *const kTouchBus[] = {"own pins", "display bus"};
 static const char *const kRedLeds[] = {"GPIO4", "GPIO22"};
@@ -408,7 +414,11 @@ static const char *const kPowerKeys[] = {"absent / hidden", "press twice", "hold
                                          "press twice or hold"};
 // Options (adv false) change what the library reports, or an LED pin: none
 // can break the screen or touch.  Advanced fields can.
+// The NM-CYD-C5 (ESP32-C5) and the ES3C28P (ESP32-S3) have one wiring and
+// one size, a WS2812 instead of a three-pin LED, no GPIO34 and no power key:
+// they get only the panel and touch fields.
 static const OvrField kFields[] = {
+#if CYDR_CHIP_CLASSIC
     {"Screen size",          offsetof(cydr_overrides_t, size),         kSizes,      5, false, false,
      "Names the screen's size. The 32E 3.5\" and 4.0\" are built alike, so detection "
      "can't tell them apart. Changes no pins and no drawing."},
@@ -426,6 +436,7 @@ static const OvrField kFields[] = {
     {"Model",                offsetof(cydr_overrides_t, model),        kModels,     CYDR_MODEL_COUNT - 1, false, true,
      "Names the board when detection gets it wrong. Also sets the wiring, "
      "backlight, touch chip and touch directions."},
+#endif
     {"Panel",                offsetof(cydr_overrides_t, panel),        kPanels,     3, false, true,
      "The display controller. Only offered when the panel didn't answer with its ID."},
     {"Color order",          offsetof(cydr_overrides_t, colorOrder),   kRgbBgr,     2, true,  true,
@@ -436,13 +447,16 @@ static const OvrField kFields[] = {
      "Picture mirrored left to right? Change this."},
     {"Mirror Y (MY)",        offsetof(cydr_overrides_t, mirrorY),      kClearSet,   2, true,  true,
      "Hold the board with its USB connector at the bottom: text should read upright. Picture mirrored top to bottom? Change this."},
-    {"SPI clock",            offsetof(cydr_overrides_t, spiClock),     kClocks,     2, false, true,
-     "Lower it if the picture has speckles or smeared pixels. This tool always "
+    {"SPI clock",            offsetof(cydr_overrides_t, spiClock),     kClocks,     3, false, true,
+     "Lower it if the picture has speckles or smeared pixels. 80 MHz is faster; the speed "
+     "test on the Settings screen checks whether this board can take it. This tool always "
      "runs at 20 MHz."},
+#if CYDR_CHIP_CLASSIC
     {"Backlight",            offsetof(cydr_overrides_t, backlight),    kBacklights, 2, false, true,
      "The pin that lights the screen."},
     {"Touch bus",            offsetof(cydr_overrides_t, touchBus),     kTouchBus,   2, false, true,
      "Which pins the XPT2046 resistive touch chip is on."},
+#endif
     {"Touch mirror X",       offsetof(cydr_overrides_t, touchMirrorX), kOffOn,      2, true,  true,
      "Touches land mirrored left to right? Change this."},
     {"Touch mirror Y",       offsetof(cydr_overrides_t, touchMirrorY), kOffOn,      2, true,  true,
@@ -613,6 +627,10 @@ static void blTick() {
 // Back to how setup() left the pins: the backlight on, and the other pin on
 // too unless a capacitive chip answered (then left as an input).
 static void blRestore() {
+#if !CYDR_CHIP_CLASSIC
+    display.setBacklight(100);          // one backlight pin; 21 / 27 aren't free here
+    return;
+#endif
     int bl = display.backlightPin(), other = bl == 21 ? 27 : 21;
     blDrive(bl, true);
     if (gCapChip) pinMode(other, INPUT);
@@ -716,6 +734,84 @@ static void runList(bool adv) {
         }
     }
 }
+// The speed test: display.stressTest() at 80 MHz.  The default stays 40 MHz
+// on every board -- these boards vary, and a beginner can't trace a garbled
+// screen to the clock -- so a pass offers to save the 80 MHz SPI-clock
+// override in one tap.  This tool itself stays at 20 MHz apart from the test.
+// Returns true if the user chose Save & restart.
+static lv_obj_t *gSpeedLabel;
+static const uint32_t kSpeedTestMs = 20000;
+static void speedProgress(uint32_t elapsed, uint32_t total) {
+    static uint32_t shown = UINT32_MAX;
+    uint32_t left = (total - min(elapsed, total) + 999) / 1000;
+    if (left == shown) return;
+    shown = left;
+    String s = String("Testing... ") + left + " s";
+    lv_label_set_text(gSpeedLabel, s.c_str());
+    lv_refr_now(nullptr);                   // draws over the static between windows
+}
+static bool runSpeedTest() {
+    lv_obj_t *body;
+    lv_obj_t *scr;
+    if (display.readback() == CYDR_READBACK_NONE) {
+        scr = makePage("SPEED TEST", LV_SYMBOL_LEFT " Back", nullptr, &body);
+        bodyText(body, "This board can't read its screen back, so the test can't check "
+                       "what arrived. 80 MHz can still be chosen under Advanced > SPI clock, "
+                       "untested.", 0xFFFFFF);
+        showPage(scr);
+        waitPage();
+        return false;
+    }
+    scr = makePage("SPEED TEST", LV_SYMBOL_LEFT " Back", "Start " LV_SYMBOL_RIGHT, &body);
+    bodyText(body, "Sends patches of random dots to the screen at 80 MHz, twice the "
+                   "normal speed, and reads each one back to check every dot arrived.", 0xFFFFFF);
+    bodyText(body, "For 20 seconds the whole screen will be flickering, colorful static, and "
+                   "the LED will flash. That is the test, not a fault. Don't touch anything "
+                   "until it ends.",
+             0xFFD040);
+    showPage(scr);
+    if (waitPage() != NAV_NEXT) return false;
+
+    scr = makePage("SPEED TEST", LV_SYMBOL_LEFT " Back", nullptr, &body);
+    gSpeedLabel = bodyText(body, "Testing...", 0xFFFFFF);
+    showPage(scr);
+    lv_refr_now(nullptr);
+    display.waitFlush();
+    int n = 0;
+    int bad = display.stressTest(80000000, kSpeedTestMs, speedProgress, &n);
+    Serial.printf("Speed test at 80 MHz: %d of %d windows wrong\n", bad, n);
+    if (bad >= 0) {          // the record other sketches read (RasterBouncingBalls)
+        cydr_speed_test_t rec = {(uint8_t)(bad == 0 ? CYDR_SPEED_PASSED : CYDR_SPEED_FAILED),
+                                 80000000, n, bad};
+        cydr_saveSpeedTest(rec);
+    }
+
+    if (bad == 0) {
+        scr = makePage("SPEED TEST", LV_SYMBOL_LEFT " Back", "Save", &body);
+        String ok = String("Passed: all ") + n + " patches came back right at 80 MHz.\n\n"
+                    "Save to run the screen at 80 MHz in every sketch on this board; "
+                    "the board then restarts. (Any other changes you made here are "
+                    "saved too.)";
+        bodyText(body, ok.c_str(), 0x80FF80);
+        showPage(scr);
+        if (waitPage() != NAV_NEXT) return false;
+        gEdit.spiClock = 3;
+        cydr_saveOverrides(gEdit);
+        Serial.println("Overrides saved (SPI clock 80 MHz).");
+        return true;
+    }
+    String msg = bad < 0 ? String("The test couldn't run (out of memory).")
+                         : String(bad) + " of " + n + " patches came back wrong at 80 MHz.";
+    msg += " Keep this board at its normal speed";
+    msg += gEdit.spiClock == 3 ? ": set Advanced > SPI clock back to auto, then Save & restart."
+                               : ".";
+    scr = makePage("SPEED TEST", LV_SYMBOL_LEFT " Back", nullptr, &body);
+    bodyText(body, msg.c_str(), 0xFFD040);
+    showPage(scr);
+    waitPage();
+    return false;
+}
+
 // Never returns: the screens end in a restart.
 static void runOverrides(bool safeStart) {
     lv_indev_t *kp = lv_indev_create();
@@ -747,8 +843,9 @@ static void runOverrides(bool safeStart) {
         bodyText(body, info.c_str(), 0xFFFFFF);
         if (safeStart)
             bodyText(body, "Recovery start: saved overrides are NOT in effect now.", 0xFFD040);
-        bodyRow(body, "Options", 0);
+        if (CYDR_CHIP_CLASSIC) bodyRow(body, "Options", 0);   // the C5 / S3 have no Options fields
         bodyRow(body, "Advanced", 1);
+        bodyRow(body, "Speed test (80 MHz)", 4);
         bodyRow(body, "Save & restart", 2);
         bodyRow(body, "Clear all & restart", 3);
         bodyText(body, "Cancel restarts without saving. BOOT: short press = next, "
@@ -772,6 +869,7 @@ static void runOverrides(bool safeStart) {
             }
             if (warned) runList(true);
         }
+        if (r == 4 && runSpeedTest()) break;      // saved: restart
         if (r == 2) { cydr_saveOverrides(gEdit); Serial.println("Overrides saved."); break; }
         if (r == 3) { cydr_clearOverrides();     Serial.println("Overrides cleared."); break; }
     }
@@ -907,7 +1005,7 @@ void setup() {
     // board: that pin floats, has a pull-up to a header, or is the 32E 2.8"'s SPI
     // header CS.  Not where a capacitive chip answers: GPIO21 is the CST820's
     // INT output on the 2432S024C, and could be on others.
-    if (!capChip) {
+    if (!capChip && CYDR_CHIP_CLASSIC) {  // the C5 and S3 have one backlight pin
         int other = display.backlightPin() == 21 ? 27 : 21;
         pinMode(other, OUTPUT);
         digitalWrite(other, HIGH);

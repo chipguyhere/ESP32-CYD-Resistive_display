@@ -1,4 +1,7 @@
-# Resistive-touch CYD boards — sound
+# Resistive-touch CYD boards (ESP32) — sound
+
+> The classic **ESP32** boards. The **NM-CYD-C5**, which has no DAC, is in
+> [README-sound-ESP32-C5.md](README-sound-ESP32-C5.md).
 
 **Start here if you just want to play music.** This library doesn't include a sound
 driver, meaning ready-made code you call to make noise. It comes with one working
@@ -17,7 +20,7 @@ sections below explain how to avoid that.
 
 How to get a beep, a sample or an MP3 out of the speaker without breaking anything
 else. Written for the **ESP32-32E 2.8"**; how the other boards differ is just below. Answered against the same questionnaire as the family's other
-`README-sound.md` files (`../README-sound.md`), so a "No" is a fact about the board.
+`README-sound-ESP32.md` files (`../README-sound-ESP32.md`), so a "No" is a fact about the board.
 The circuit values, driver internals and the reasoning behind each rule are in
 [README-engineering.md](README-engineering.md#sound).
 
@@ -211,7 +214,7 @@ with the same configuration.
 ### Signal chain
 
 **What is the output device?** A 2-pin speaker connector (MX1.25, like every connector
-on the board — see [README-board.md](README-board.md#connectors)). **Pin 1 (the
+on the board — see [README-board-ESP32.md](README-board-ESP32.md#connectors)). **Pin 1 (the
 silkscreen dot) is SP+, pin 2 is SP−.** It is a bridge-tied output, so neither pin is
 ground: don't tie SP− to anything, and polarity only matters if a second speaker is
 ever driven in phase. No speaker is fitted; the amplifier is rated for **4–8 Ω**. No
@@ -325,7 +328,7 @@ music are fine; cymbals and sibilance are dulled.
 the one place this board beats the sibling for power. When on, a few mA from the main
 rail (straight from the cell on battery) plus the speaker power while playing; playback
 current at a typical level is **TODO (bench)** and belongs in
-[README-power.md](README-power.md#power-consumption)'s table, not here.
+[README-power-ESP32.md](README-power-ESP32.md#power-consumption)'s table, not here.
 
 **Does anything about sound interfere with sleep?** No, provided the amplifier is off.
 In deep sleep GPIO4 floats and the board's pull-up takes it HIGH — amplifier off — so

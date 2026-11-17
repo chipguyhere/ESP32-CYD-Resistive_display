@@ -1,8 +1,8 @@
 # Overrides — when detection gets a board wrong
 
 `display.begin()` works out the board, the panel and how to drive them
-([README-board-detection.md](README-board-detection.md)). Every board in the
-[supported list](README-board.md#which-boards-these-are) is detected correctly. A new
+([README-board-detection-ESP32.md](README-board-detection-ESP32.md)). Every board in the
+[supported list](README-board-ESP32.md#which-boards-these-are) is detected correctly. A new
 variant might not be: a panel with its color order the other way, touch that runs
 backwards, LED pins swapped. Overrides let you correct that **without changing the
 library**. You set them once per board in the `TouchCalibrate` example. They are saved
@@ -22,7 +22,12 @@ variant it doesn't know.
 3. Choose **Options** or **Advanced**. **Options** holds the settings that can't break
    the screen or touch: screen size, the LED pins, GPIO34 and the power key.
    **Advanced** holds the rest — model, panel, colors, mirroring, SPI clock,
-   backlight and touch — behind a warning screen.
+   backlight and touch — behind a warning screen. The Settings screen also has a
+   **Speed test**: 20 seconds of colorful static while it checks whether the board
+   can run the screen at 80 MHz, twice the normal speed. If it passes, one tap saves
+   that and restarts. [How it tests](README-engineering.md#the-spi-clock). On the **NM-CYD-C5** there is no
+   Options list, and Advanced holds only the panel and touch settings: that board has
+   one wiring, so its pins can't be wrong.
 4. Each list shows its settings as **`auto (what was detected)`** or a forced value.
    Tap one to open its own page, then tap a choice in the list. **Next** goes to the
    next setting; **Back** returns to the list.
@@ -64,7 +69,7 @@ is how to tell that a variant needs it.
 | Red LED | GPIO4 / GPIO22 | `display.redLedPin()` names the wrong pin. With GPIO22, GPIO4 is taken to be the amplifier switch. |
 | Green / blue LED | 16 / 17 or 17 / 16 | Green and blue swapped. |
 | GPIO34 | light sensor / battery | `display.gpio34IsBattery()` gives the wrong answer (as `BoardDetect` shows). |
-| Power key (SW1) off | absent / hidden, press twice, hold 10 s, press twice or hold | `display.powerOffHint()` gives the wrong gesture to turn the board off on battery. Choose **absent / hidden** if the board's enclosure covers SW1: it is then reported as having no power key. See [README-power.md](README-power.md#the-power-key-on-the-sw1-boards). |
+| Power key (SW1) off | absent / hidden, press twice, hold 10 s, press twice or hold | `display.powerOffHint()` gives the wrong gesture to turn the board off on battery. Choose **absent / hidden** if the board's enclosure covers SW1: it is then reported as having no power key. See [README-power-ESP32.md](README-power-ESP32.md#the-power-key-on-the-sw1-boards). |
 
 None of the pin choices can short anything. On every known board the "other" pin of
 each pair either floats or has a resistor to a rail, and no chip drives it. A wrong

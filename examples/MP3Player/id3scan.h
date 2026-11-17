@@ -11,7 +11,9 @@
 #pragma once
 
 #include <Arduino.h>
+#include <FS.h>
 
 // Returns true if at least one of title / artist was found.  Either string
 // may be left empty.
-bool id3_read(const char *path, String &title, String &artist);
+// fs: the card (Arduino's SD on the classic ESP32, the C5's shared-bus mount).
+bool id3_read(fs::FS &fs, const char *path, String &title, String &artist);

@@ -1,4 +1,7 @@
-# Resistive-touch CYD boards — power (ESP32-32E 2.8")
+# Resistive-touch CYD boards (ESP32) — power (ESP32-32E 2.8")
+
+> The classic **ESP32** boards. The **NM-CYD-C5** is in
+> [README-power-ESP32-C5.md](README-power-ESP32-C5.md).
 
 How this board is powered and what a sketch can do about it, for a developer trying to
 run on battery as long as possible. There is no `chipguy_*_power` library for this board
@@ -15,7 +18,7 @@ figure — the schematic, the part datasheets, the arithmetic — are in
 > battery connector and read the cell on **GPIO34** exactly as the 2.8" does — one cell
 > read 2.07 V on each, 2.08–2.12 V with none fitted (2026-10-18). The rest of their power
 > section hasn't been examined — **TODO (bench)**
-> ([Other boards](README-board.md#other-boards)).
+> ([Other boards](README-board-ESP32.md#other-boards)).
 >
 > The **ESP32-3248S035C** is micro-USB only: no battery connector, charger or power
 > key (one unit, 2026-11-02). **TODO (bench):** its deep-sleep draw.
@@ -85,7 +88,7 @@ measured on this board yet. `**TODO (bench):**` marks what a test would settle.
 ## How power reaches the board
 
 USB 5 V (or 5 V on the UART header's 5V pin, which behaves identically — see
-[README-board.md](README-board.md#connectors)) feeds the charger and, through a diode,
+[README-board-ESP32.md](README-board-ESP32.md#connectors)) feeds the charger and, through a diode,
 the board's main rail. When USB is absent a transistor connects the cell to that rail
 instead; when USB returns it hands back without a brown-out. The main rail is ~4.6 V on
 USB and the cell voltage (3.0–4.2 V) on battery; a low-dropout regulator makes 3.3 V
@@ -102,10 +105,10 @@ the USB serial chip from 3.3 V — so both are powered on battery too.
 **Can this board be powered by USB?** Yes, entirely. USB runs the whole board — ESP32,
 display, backlight, touch, amplifier, card slot, USB serial — and charges the battery
 if one is fitted. Note that some USB-C cables won't power it at all; see
-[README-board.md](README-board.md#which-boards-these-are).
+[README-board-ESP32.md](README-board-ESP32.md#which-boards-these-are).
 
 **Can this board run on battery power?** Yes — a **single lithium cell** (3.0–4.2 V) on
-the 2-pin connector ([polarity](README-board.md#connectors)). Handover between USB and
+the 2-pin connector ([polarity](README-board-ESP32.md#connectors)). Handover between USB and
 cell is automatic in both directions. The regulator keeps 3.3 V up until the cell is
 around **3.5–3.6 V**, and the ESP32 keeps running below that to roughly a **3.2–3.3 V**
 cell (inferred) — usable to the cell's floor; this is a real battery board.
@@ -198,7 +201,7 @@ off looks exactly like a board that is off.
 **Does the board have a battery / charge light?** No. Nothing tells you the cell is
 charging or charged; unplug it after a couple of hours, or watch GPIO34 from the
 sketch. The RGB LED is a general-purpose software LED, not a status indicator — pins,
-polarity and the reset-glow caveat are in [README-board.md](README-board.md#led-buttons-and-other-on-board-io).
+polarity and the reset-glow caveat are in [README-board-ESP32.md](README-board-ESP32.md#led-buttons-and-other-on-board-io).
 
 ### Shutting down, sleeping, waking
 
@@ -291,7 +294,7 @@ RST gets a dead-looking board (the bootloader) until the next reset.
 | Rail / part | Control | Default | Notes |
 |---|---|---|---|
 | **Backlight** | GPIO21 via `display.setBacklight(0..100)` | on at 100 % after `lv_setup.begin()` | The largest consumer on the board (**TODO (bench):** how much), so the knob that matters most. |
-| **Audio amplifier** | **GPIO4, LOW = on** | **off** — a pull-up holds it off until a sketch drives GPIO4 LOW | Costs nothing when off, a few mA plus speaker power when on. Sequencing is in [README-sound.md](README-sound.md). |
+| **Audio amplifier** | **GPIO4, LOW = on** | **off** — a pull-up holds it off until a sketch drives GPIO4 LOW | Costs nothing when off, a few mA plus speaker power when on. Sequencing is in [README-sound-ESP32.md](README-sound-ESP32.md). |
 
 **Which peripherals cannot be powered off?** Everything else:
 

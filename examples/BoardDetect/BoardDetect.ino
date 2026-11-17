@@ -4,8 +4,8 @@
  * For the resistive-touch "Cheap Yellow Display" boards: ESP32-2432S028,
  * ESP32-32E 2.8", 3.2", 3.5", 4.0", ESP32-024 2.4", ESP32-035 3.5" and
  * ESP32-2432S032 (XPT2046 touch), and the capacitive ESP32-2432S032C and
- * ESP32-3248S035C (GT911), ESP32-2432S024C and JC2432W328 (CST820); board and
- * panel detected at start-up.
+ * ESP32-3248S035C (GT911), ESP32-2432S024C and JC2432W328 (CST820); and the
+ * ESP32-S3 ES3C28P (FT6336); board and panel detected at start-up.
  *
  * Runs the library's board detection and shows the result on the screen (and
  * on Serial at 115200): the board model and its panel, the touch chip, the
@@ -26,15 +26,20 @@
  *   display.redLedPin()             4 or 22 (-1 if WiFi was on first)
  *   display.greenLedPin() / blueLedPin()   16 / 17 (17 / 16 on the ESP32-024 / -035)
  *   display.readback() / readbackName()    GPIO12, shared GPIO13 or unavailable
- * See README-board-detection.md.
+ * See README-board-detection-ESP32.md.
  *
  * Requires the following libraries:
  *   - chipguy_ESP32-CYD-Resistive_display  (display + touch driver, this library)
  *   - lvgl 9
  *
+ * What differs per chip (the card, the battery and light-sensor pins, the
+ * amplifier switch) is in platform_ESP32.cpp / platform_ESP32S3.cpp.
+ *
  * Arduino IDE Board Settings:
- *   - Board: "ESP32 Dev Module" (in Tools > Board > esp32).
- *   - The defaults work; the sketch fits the default partition scheme.
+ *   - Classic CYDs: "ESP32 Dev Module" (in Tools > Board > esp32).  The
+ *     defaults work; the sketch fits the default partition scheme.
+ *   - ES3C28P (ESP32-S3): "ESP32S3 Dev Module", USB CDC On Boot: Enabled,
+ *     PSRAM: OPI PSRAM (or Disabled), Flash Size: 16MB.
  *
  ******************************************************************************/
 
@@ -42,92 +47,32 @@
 #include "lv_conf.h"
 #include "lvgl.h"
 #include "lv_setup.hpp"
-#include <SD.h>
+#include "platform.h"     // what differs per chip: platform_ESP32*.cpp
 
 #define BOOT_PIN 0                        // BOOT button: clears the drawing
 static const uint16_t C_DOT = 0xFFE0;     // yellow (RGB565)
 static const uint32_t C_TITLE = 0x40C0FF;
 
-// The light sensor reads 0 (shown as the converter's ~142 mV floor) in
-// anything but near-darkness, and rises only in the dark: about 1.67 V on the
-// 2432S028 and ESP32-035, 0.64 V on the ESP32-024 (bench, 2026-10-18 and
-// 2026-10-23).  300 mV splits them.  The default 11 dB attenuation spans both.
-// The ESP32-035's sensor sees the board's own backlight: in a closed box with
-// the screen lit it read only ~0.2 V.
-static const uint32_t DARK_MV = 300;
-
-// What each board has besides the screen (see README-board.md).  Every board
-// has a speaker amplifier; the power switch is GPIO4 (LOW = on) where there is
-// one.  The light sensor is on GPIO34; on the ESP32-32E boards GPIO34 is the
-// battery reading instead (half the cell voltage).
-struct BoardFacts {
-    bool battery;          // battery connector and charger
-    bool batteryReading;   // GPIO34 = cell / 2
-    bool lightSensor;      // photoresistor on GPIO34
-    bool ampSwitch;        // amplifier enable on GPIO4
-};
-
 static bool gKnown = true;   // false: model unknown, the facts are guesses
-
-static BoardFacts factsFor(cydr_model_t m) {
-    switch (m) {
-        case CYDR_MODEL_2432S028:  return {false, false, true,  false};
-        case CYDR_MODEL_32E_28:
-        case CYDR_MODEL_32E_32:
-        case CYDR_MODEL_32E_35_40: return {true,  true,  false, true};
-        case CYDR_MODEL_024:
-        case CYDR_MODEL_035:
-        case CYDR_MODEL_2432S032:
-        case CYDR_MODEL_2432S032C: return {true,  false, true,  false};
-        // Battery with an SW1 power key, GPIO4 the red LED (bench, 2026-10-31).
-        // The light sensor is taken from GPIO34's reading, not yet a dark test.
-        case CYDR_MODEL_2432S024C:
-        case CYDR_MODEL_JC2432W328: return {true,  false, true,  false};
-        // Micro-USB power only; a photoresistor is fitted (bench, 2026-11-02).
-        case CYDR_MODEL_3248S035C:  return {false, false, true,  false};
-        default: gKnown = false;   return {false, false, false, display.redLedPin() == 22};
-    }
-}
-
 static BoardFacts gFacts;
 static const char *yesNo(bool b) { return gKnown ? (b ? "yes" : "no") : (b ? "yes?" : "no?"); }
 
-static const char *cardTypeName(uint8_t t) {
-    switch (t) {
-        case CARD_MMC:  return "MMC";
-        case CARD_SD:   return "SD";
-        case CARD_SDHC: return "SDHC";
-        default:        return "unknown";
-    }
-}
-
-static String sdText() {
-    // The card slot has the same pins on every board: VSPI (the default SPI)
-    // with CS on GPIO5.  See README-sdcard.md.
-    if (!SD.begin(5)) return "none / not FAT";
-    String s = String(cardTypeName(SD.cardType())) + ", " +
-               String((uint32_t)(SD.cardSize() >> 20)) + " MB";
-    SD.end();
-    return s;
-}
-
-// ── The live lines (GPIO34 is ADC1, so these reads work with WiFi on) ──────
+// ── The live lines (ADC1 pins on every chip, so these reads work with WiFi on)
 static String batteryText() {
     String s = String("Battery support: ") + yesNo(gFacts.battery);
     if (gFacts.batteryReading)
-        s += String(", ") + String(analogReadMilliVolts(34) * 2 / 1000.0f, 2) + " V";
+        s += String(", ") + String(platform_battery_volts(), 2) + " V";
     return s;
 }
 
 static String lightText() {
     String s = String("Light sensor: ") + yesNo(gFacts.lightSensor);
-    if (gFacts.lightSensor) s += String(", ") + analogReadMilliVolts(34) + " mV";
+    if (gFacts.lightSensor) s += String(", ") + platform_light_mv() + " mV";
     return s;
 }
 
 static String darkText() {
-    return String("Darkness detector: ") +
-           (analogReadMilliVolts(34) > DARK_MV ? "dark" : "not dark");
+    return String("Darkness detector: ") + (platform_is_dark() ? "dark" : "not dark");
 }
 
 // ── Screen ─────────────────────────────────────────────────────────────────
@@ -179,7 +124,9 @@ static void buildScreen() {
     lv_obj_set_x(gList, 8);
 
     bool shared = display.board() == CYDR_BOARD_SHARED_TOUCH;
-    if (lv_setup.touch().capacitive()) {
+    if (lv_setup.touch().chip() == CYDR_TOUCH_NONE) {
+        addLine("Touch: none fitted");
+    } else if (lv_setup.touch().capacitive()) {
         addLine(String("Touch: ") + lv_setup.touch().chipName() + " capacitive (I2C)");
     } else {
         addLine(shared ? "Touch: XPT2046 on display SPI" : "Touch: XPT2046");
@@ -189,9 +136,12 @@ static void buildScreen() {
     // Whether pixels can be read back from the panel, and on which pin.
     addLine(String("Display read: ") + display.readbackName());
     auto pin = [](int8_t p) { return p < 0 ? String("?") : String(p); };
-    addLine("R/G/B LED: GPIO" + pin(display.redLedPin()) + "/" +
-            pin(display.greenLedPin()) + "/" + pin(display.blueLedPin()));
-    addLine("SD card: " + sdText());
+    if (display.rgbLedPin() >= 0)
+        addLine(String("RGB LED: WS2812 on GPIO") + display.rgbLedPin());
+    else
+        addLine("R/G/B LED: GPIO" + pin(display.redLedPin()) + "/" +
+                pin(display.greenLedPin()) + "/" + pin(display.blueLedPin()));
+    addLine("SD card: " + platform_sd_text());
     lblBattery = addLine(batteryText());
     lblLight = addLine(lightText());
     lblDark = gFacts.lightSensor ? addLine(darkText()) : nullptr;
@@ -202,7 +152,8 @@ static void buildScreen() {
     }
     addLine("Amplifier: yes");
     addLine(String("Amp power switch: ") +
-            (gFacts.ampSwitch ? (gKnown ? "GPIO4" : "GPIO4?") : yesNo(false)));
+            (gFacts.ampSwitch ? String(platform_amp_switch_pin()) + (gKnown ? "" : "?")
+                              : String(yesNo(false))));
 
     lv_obj_t *hint = lv_label_create(scr);
     lv_obj_set_style_text_font(hint, &lv_font_montserrat_12, 0);
@@ -243,7 +194,7 @@ void setup() {
     // uses it) only after this: the red-LED check needs ADC2.
     lv_setup.begin();
     pinMode(BOOT_PIN, INPUT_PULLUP);
-    gFacts = factsFor(display.model());
+    gFacts = platform_facts(display.model(), &gKnown);
     // A saved override (TouchCalibrate's Overrides screen) can say otherwise.
     int8_t gpio34 = display.gpio34IsBattery();
     if (gpio34 >= 0) { gFacts.batteryReading = gpio34; gFacts.lightSensor = !gpio34; }

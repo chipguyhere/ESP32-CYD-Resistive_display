@@ -1,8 +1,10 @@
 /*
  * player.h - MP3 playlist player for the CYD.
  *
- * Scans the SD card root for *.mp3, then decodes them (ESP8266Audio, libmad)
- * in a FreeRTOS task on core 0 so LVGL on core 1 never waits on the decoder.
+ * Scans the card's root for *.mp3, then decodes them (ESP8266Audio, libmad)
+ * in a FreeRTOS task -- on core 0 on the classic ESP32, so LVGL on core 1
+ * never waits on the decoder; on the single-core ESP32-C5 at a priority above
+ * LVGL's.
  *
  * The UI talks to the player only through these functions.  Commands go
  * through a queue; status comes back as a snapshot copied under a spinlock.
@@ -29,9 +31,9 @@ struct PlayerStatus {
     char artist[64];
 };
 
-// Mount the SD card and build the playlist.  Returns false if the card
-// didn't mount.  Call once from setup(); safe to call before or after
-// lv_setup.begin() — the SD card is on VSPI, the display on HSPI.
+// Mount the card and build the playlist.  Returns false if the card didn't
+// mount.  Call once from setup(), after lv_setup.begin(): on the ESP32-C5
+// the card shares the display's SPI bus, which the display sets up.
 bool player_begin();
 
 struct TrackInfo {
@@ -63,6 +65,9 @@ uint8_t player_volume();
 // click of fixed size, so it gets relatively louder as the volume goes down.
 void player_set_dither(bool on);
 bool player_dither();
+// Whether the dither setting means anything: the classic ESP32's 8-bit DAC
+// has a quantizer worth dithering; the ESP32-C5's PDM output takes 16 bits.
+bool player_has_dither();
 
 
 PlayerStatus player_status();

@@ -17,15 +17,23 @@ by many vendors. One library runs all of these:
 | **ESP32-2432S024C** | 2.4", 240×320 | capacitive touch; "ESP32-2432S024" on the back |
 | **Guition JC2432W328** | 2.8", 240×320 | capacitive touch; "JC2432W328" on the back |
 | **ESP32-3248S035C** | 3.5", 320×480 | capacitive touch; sold as ESP32-3248S035C; micro-USB only, no battery connector |
+| **NM-CYD-C5** | 2.8", 240×320 | the newer **ESP32-C5** chip (5 GHz Wi-Fi 6, extra memory); two USB-C ports; sold by RockBase IoT / NMTech |
+| **ES3C28P** (black 2.8" S3) | 2.8", 240×320 | a **black** board; *2.8" LCD Display / ESP32-S3 240x320 / Capacitive Touch* on the back; the **ESP32-S3** chip; capacitive touch; BAT and SPEAKER connectors. The **ES3N28P** (no touch) works too |
 
 On the ESP32-32E boards that writing is three lines on the back of the board: the
 size, then the board name and resolution, then *Resistance Touch*.
+
+All but the last two are built on the original **ESP32** chip. The **NM-CYD-C5** looks
+like them but has a newer chip, the **ESP32-C5**. The black **ES3C28P** looks like the
+ESP32-32E 2.8" but has an **ESP32-S3**. On those two a few things work differently:
+each has its own settings in the Arduino IDE (below) and its own pages about the rest
+of the board. Wherever this page says "the classic boards", it means all the others.
 
 You don't tell the library which one you have: it checks when it starts and sets up
 the screen and touch to match. A sketch that cares — say, to light the RGB LED, whose
 pins differ between boards — can ask it, and can ask which
 board it is.
-[How to ask](README-board-detection.md).
+[How to ask](README-board-detection-ESP32.md).
 
 The library handles the screen and the touch panel for you, so you don't have to
 think about either. What's left for you is the fun part: writing your app — and
@@ -37,13 +45,13 @@ suits it.
 > **capacitive** touch (glass that responds to a light finger, like a phone; the "C" in
 > a name like ESP32-2432S028**C**) work only if they're in the table above: the
 > **ESP32-2432S032C**, the **ESP32-2432S024C**, the **JC2432W328** and the
-> **ESP32-3248S035C**. Other capacitive
+> **ESP32-3248S035C** and the black **ES3C28P**. Other capacitive
 > boards look the same but may not work. The library still finds their touch chip if
 > it's one it knows, but it can't tell which board it is.
 
 Across these boards there are four different screen setups, two of them behind the
 same 2.8" label. You don't need to know which one yours has.
-[Details](README-board.md#screen-variants).
+[Details](README-board-ESP32.md#screen-variants).
 
 ---
 
@@ -62,12 +70,22 @@ Arduino Library Manager. To install:
 
 ### Arduino IDE board settings
 
-In **Tools ▸ Board ▸ esp32**, choose **"ESP32 Dev Module"**. The default settings work.
-Two of them matter, and the library checks them when you build: **Flash Size** must be
-**4MB** and **PSRAM** must be **Disabled** — that's what every one of these boards
-actually has. If a
-build stops with an error mentioning flash size or PSRAM, the IDE has quietly changed
-one of those settings. Set it back and build again.
+**Classic boards:** in **Tools ▸ Board ▸ esp32**, choose **"ESP32 Dev Module"**. The
+default settings work. Two of them matter, and the library checks them when you build:
+**Flash Size** must be **4MB** and **PSRAM** must be **Disabled** — that's what every
+one of these boards actually has.
+
+**NM-CYD-C5:** choose **"ESP32C5 Dev Module"**, then set **PSRAM** to **Enabled** (the
+library needs it) and **Flash Size** to **16MB**. Plug the USB cable into the port at
+the **bottom-left corner** to upload. [More](README-board-ESP32-C5.md#which-board-this-is).
+
+**ES3C28P (black, ESP32-S3):** choose **"ESP32S3 Dev Module"**, then set **USB CDC On
+Boot** to **Enabled** (otherwise `Serial` never reaches your computer — this board has
+no separate USB chip), **PSRAM** to **OPI PSRAM**, and **Flash Size** to **16MB**.
+[More](README-board-ESP32-S3.md#which-board-this-is).
+
+If a build stops with an error mentioning flash size, PSRAM or USB CDC, the IDE has quietly
+changed one of those settings. Set it back and build again.
 
 ### Plugging it in
 
@@ -107,8 +125,8 @@ blinking cursor, touch, and pictures for a header or footer — but it only work
 the screen upright (portrait). For a sideways (landscape) screen, use LVGL.
 
 **Its memory use is small and never changes.** The terminal takes about 5 KB of RAM,
-all set aside when it starts, and asks for no more however much you print. These
-boards have no extra memory chip (no PSRAM), so that matters when the same sketch
+all set aside when it starts, and asks for no more however much you print. The
+classic boards have no extra memory chip (no PSRAM), so that matters when the same sketch
 also runs Wi-Fi, a web server, MQTT or anything else that needs memory: the screen
 can't be the thing that runs the board out of it, and how much is left stays
 predictable.
@@ -143,13 +161,18 @@ board's name, its screen, which pin the RGB LED is on, whether touch has been
 calibrated, the SD card, and whether the board has battery support, a light sensor and
 a switch for its speaker amplifier. The bottom line shows the light sensor or the
 battery live. Then draw on the screen with a finger to check touch. The calls it uses
-are explained in [README-board-detection.md](README-board-detection.md). (It is built
+are explained in [README-board-detection-ESP32.md](README-board-detection-ESP32.md). (It is built
 with LVGL, so it needs LVGL installed.)
 
 **TouchCalibrate — a one-time setup tool.** Not a template — a tool you upload once to
 calibrate the touch panel and tune its noise filters. It saves the result on the board
 so your real sketch picks it up automatically. See
 [Touch calibration](#touch-calibration--filtering) below. (Also built with LVGL.)
+
+**RasterBouncingBalls — what can your screen do?** A demo that tests your board step by
+step: whether its screen takes double speed, how often it refreshes, and whether
+animation can run with no tearing. It explains each result on screen before the balls
+start. See [README-lvgl.md](README-lvgl.md#rasterbouncingballs--what-can-your-screen-do).
 
 ---
 
@@ -169,7 +192,9 @@ If something about your board looks wrong after calibrating — colors swapped, 
 picture mirrored, touch running backwards — `TouchCalibrate` can also correct that:
 hold BOOT for two seconds on its drawing test. The same screen can tell the library
 which board you have, if it guessed wrong. It can also say which size your 32E 3.5" /
-4.0" is. The library can't tell those two apart on its own. See
+4.0" is. The library can't tell those two apart on its own. And it has a **speed
+test** that checks whether your board can run the screen twice as fast. If it passes,
+one tap makes every sketch on that board use the faster speed. See
 [README-overrides.md](README-overrides.md).
 
 The capacitive boards (**ESP32-2432S032C**, **ESP32-2432S024C**, **JC2432W328**,
@@ -195,22 +220,30 @@ library leaves all of those alone so your sketch can use them. Want to hook up a
 **sensor**? Most small sensor boards use I²C, and the 32E 2.8" can talk I²C through its
 SPI connector as long as you're not using the SD card at the same time. The pins,
 what's already in use, and how to add your own hardware are in
-**[README-board.md](README-board.md)**.
+**[README-board-ESP32.md](README-board-ESP32.md)**.
 
 The pages about the rest of the board — connectors, power, sound and the SD card —
 describe the **ESP32-32E 2.8"** in full. What's known about the other boards, and how
-they differ, is in [README-board.md](README-board.md#other-boards); much of it is still
+they differ, is in [README-board-ESP32.md](README-board-ESP32.md#other-boards); much of it is still
 to be checked.
 
 ### TF / microSD card slot
 
-Every board has a microSD slot, and **it's wired the same way on every board**, so
-the same code reads the card on every one. The library doesn't touch it and doesn't
+Every board has a microSD slot. On the classic boards **it's wired the same way on
+every board**, so the same code reads the card on every one. The library doesn't touch it and doesn't
 include a file system, but **nothing about it conflicts with the screen** — the card
 has its own pins, and they're the ones Arduino's standard `SD` library expects, so
 `SD.begin(5)` just works alongside this library. The **MP3Player** example reads its
 songs from the card this way and has been tried on every board — copy its card code
-if you need one that's known to work. Details in **[README-sdcard.md](README-sdcard.md)**.
+if you need one that's known to work. Details in **[README-sdcard-ESP32.md](README-sdcard-ESP32.md)**.
+
+On the **NM-CYD-C5** the card shares the screen's wires, so Arduino's `SD` library
+can't be used there. The card is opened a different way, which **MP3Player** also
+shows. [Details](README-sdcard-ESP32-C5.md).
+
+On the **ES3C28P** the card uses a faster kind of connection, so it opens with Arduino's
+`SD_MMC` library instead of `SD`. Nothing is shared with the screen.
+**MP3Player** shows how. [Details](README-sdcard-ESP32-S3.md).
 
 ### Power and battery
 
@@ -221,7 +254,7 @@ it reaches 0%, otherwise this board will overdischarge the battery and ruin it.
 There is **no power switch** and no charge light, and the board can't turn itself off —
 the best it can do is sleep, slowing the battery discharge. How to read the battery
 voltage, what the reading means, how to sleep and wake, and how to make a charge
-last are in **[README-power.md](README-power.md)** (written for the 32E 2.8"; the other
+last are in **[README-power-ESP32.md](README-power-ESP32.md)** (written for the 32E 2.8"; the other
 32E boards read their battery the same way). The 2432S028 and the ESP32-3248S035C have
 no battery connector.
 
@@ -230,12 +263,22 @@ ESP32-2432S024C and JC2432W328) use it as a power button on battery. One press t
 the board on. Turning it off takes either two quick presses or a 10-second hold,
 depending on the board. Your sketch can ask which with `display.powerOffHint()`, to
 show the user. If the button is hidden inside a case, `TouchCalibrate` can mark it
-absent. [Details](README-power.md#the-power-key-on-the-sw1-boards).
+absent. [Details](README-power-ESP32.md#the-power-key-on-the-sw1-boards).
 The **ESP32-024** and **ESP32-035** have one, with a different charger: on battery alone
 the board stays off until you press **SW1** once, and two quick presses turn it off.
 Your sketch can't see SW1 or read the battery on those boards. The **ESP32-2432S032**
 works the same way, except that on some boards turning off takes a **10-second hold**
 of SW1 instead of two quick presses — it depends on the batch.
+
+The **NM-CYD-C5** has no battery connector: it runs from either USB port. It can
+sleep, and a touch on the screen can wake it, but it can't turn itself off.
+[Details](README-power-ESP32-C5.md).
+
+The **ES3C28P** has a battery connector and charger and works like the ESP32-32E
+2.8": it charges whenever USB is connected and switches to the battery by itself. It
+has **no power button**, and nothing on it can turn it off. The same warning applies:
+use a lithium cell with its own protection chip. Your sketch can read the battery on
+GPIO9. [Details](README-power-ESP32-S3.md).
 
 ### Sound
 
@@ -246,7 +289,15 @@ the ESP32-2432S032 it is always on.
 Not every audio library plays nicely with this board's touch screen, so start from the
 **MP3Player** example (an LVGL one), which shows a working setup, rather than a
 generic ESP32 audio tutorial. The recipe, the traps and a copy-and-paste beep are in
-**[README-sound.md](README-sound.md)**.
+**[README-sound-ESP32.md](README-sound-ESP32.md)**.
+
+The **NM-CYD-C5**'s chip makes sound a different way, and it sounds noticeably better:
+clearer treble and no hiss. Its amplifier is always on. **MP3Player** plays on it too.
+[Details](README-sound-ESP32-C5.md).
+
+The **ES3C28P** has a real audio chip, so it sounds the best of all these boards.
+Its amplifier is off until your sketch turns it on. **MP3Player** plays on it.
+[Details](README-sound-ESP32-S3.md).
 
 ---
 
@@ -256,11 +307,36 @@ generic ESP32 audio tutorial. The recipe, the traps and a copy-and-paste beep ar
 |---|---|
 | [README-lvgl.md](README-lvgl.md) | You're building a graphical app with LVGL: the examples, the `lv_setup` setup code, rotation. |
 | [README-terminal.md](README-terminal.md) | You're using the text terminal: printing, colors, scrolling, touch, fonts, and the examples. |
-| [README-board.md](README-board.md) | You want to use the LED, the button, the connectors, or add your own hardware, and need to know which pins are free. |
-| [README-power.md](README-power.md) | You want to run on battery, read the battery level, or make the board sleep and wake. |
-| [README-sound.md](README-sound.md) | You want the speaker to make a noise — a beep, a sample, an MP3. |
-| [README-sdcard.md](README-sdcard.md) | You want to read or write files on a microSD card — same pins on every board. |
-| [README-board-detection.md](README-board-detection.md) | Your sketch runs on more than one of these boards and needs to know which one it's on — for the LED's pins, or whether GPIO4 is the speaker switch. |
+| [README-overrides.md](README-overrides.md) | Your board looks wrong — colors swapped, picture mirrored, touch backwards — or the library named the wrong board or size: how to correct it from `TouchCalibrate` without changing any code. |
+| **Classic boards (ESP32)** | |
+| [README-board-ESP32.md](README-board-ESP32.md) | You want to use the LED, the button, the connectors, or add your own hardware, and need to know which pins are free. |
+| [README-power-ESP32.md](README-power-ESP32.md) | You want to run on battery, read the battery level, or make the board sleep and wake. |
+| [README-sound-ESP32.md](README-sound-ESP32.md) | You want the speaker to make a noise — a beep, a sample, an MP3. |
+| [README-sdcard-ESP32.md](README-sdcard-ESP32.md) | You want to read or write files on a microSD card — same pins on every classic board. |
+| [README-board-detection-ESP32.md](README-board-detection-ESP32.md) | Your sketch runs on more than one of these boards and needs to know which one it's on — for the LED's pins, or whether GPIO4 is the speaker switch. |
+| **NM-CYD-C5 (ESP32-C5)** | |
+| [README-board-ESP32-C5.md](README-board-ESP32-C5.md) | The C5 board's settings, USB ports, LED, buttons, connectors and free pins. |
+| [README-power-ESP32-C5.md](README-power-ESP32-C5.md) | How it's powered, and what sleeping and waking can do. |
+| [README-sound-ESP32-C5.md](README-sound-ESP32-C5.md) | Sound without a DAC: how the C5 makes it, and the code. |
+| [README-sdcard-ESP32-C5.md](README-sdcard-ESP32-C5.md) | Opening the card when it shares the screen's wires. |
+| **ES3C28P (black, ESP32-S3)** | |
+| [README-board-ESP32-S3.md](README-board-ESP32-S3.md) | The S3 board's settings, LED, buttons, connectors and free pins. |
+| [README-power-ESP32-S3.md](README-power-ESP32-S3.md) | Battery, charging, reading the battery, and sleeping and waking. |
+| [README-sound-ESP32-S3.md](README-sound-ESP32-S3.md) | Sound through its audio chip, and the code. |
+| [README-sdcard-ESP32-S3.md](README-sdcard-ESP32-S3.md) | Opening the card with `SD_MMC`. |
+| **Engineers** | |
+| [README-engineering.md](README-engineering.md) | The electronics: the schematics, the parts, the measurements and the reasoning behind everything above, for every chip. |
+| [schematic-description-NM-CYD-C5.md](schematic-description-NM-CYD-C5.md) | The NM-CYD-C5's schematic, narrated part by part — for engineers, and for an AI assistant without the drawing. |
+| [schematic-description-ES3C28P.md](schematic-description-ES3C28P.md) | The ES3C28P's schematic, narrated part by part — for engineers, and for an AI assistant without the drawing. |
+
+---|---|
+| [README-lvgl.md](README-lvgl.md) | You're building a graphical app with LVGL: the examples, the `lv_setup` setup code, rotation. |
+| [README-terminal.md](README-terminal.md) | You're using the text terminal: printing, colors, scrolling, touch, fonts, and the examples. |
+| [README-board-ESP32.md](README-board-ESP32.md) | You want to use the LED, the button, the connectors, or add your own hardware, and need to know which pins are free. |
+| [README-power-ESP32.md](README-power-ESP32.md) | You want to run on battery, read the battery level, or make the board sleep and wake. |
+| [README-sound-ESP32.md](README-sound-ESP32.md) | You want the speaker to make a noise — a beep, a sample, an MP3. |
+| [README-sdcard-ESP32.md](README-sdcard-ESP32.md) | You want to read or write files on a microSD card — same pins on every board. |
+| [README-board-detection-ESP32.md](README-board-detection-ESP32.md) | Your sketch runs on more than one of these boards and needs to know which one it's on — for the LED's pins, or whether GPIO4 is the speaker switch. |
 | [README-overrides.md](README-overrides.md) | Your board looks wrong — colors swapped, picture mirrored, touch backwards — or the library named the wrong board or size: how to correct it from `TouchCalibrate` without changing any code. |
 | [README-engineering.md](README-engineering.md) | You want the electronics: the schematic, the parts, the measurements and the reasoning behind everything above. |
 

@@ -910,6 +910,9 @@ void chipguy_CYD_resistive_terminal::_taskEntry(void *arg) {
 void chipguy_CYD_resistive_terminal::_taskLoop() {
     for (;;) {
         bool did = _step();
+        // Between steps the bus is released and idle: let a shared-bus touch
+        // controller sample now, so pollTouch() never waits for a step.
+        if (did) _display->runTouchSampler();
         if (_waiting) {
             _waiting = false;
             xSemaphoreGive(_waitSem);

@@ -1,11 +1,14 @@
-# Resistive-touch CYD boards — the rest of the board
+# Resistive-touch CYD boards (ESP32) — the rest of the board
+
+> The classic **ESP32** boards. The **NM-CYD-C5** (ESP32-C5) is in
+> [README-board-ESP32-C5.md](README-board-ESP32-C5.md).
 
 What is on these boards besides the display: the connectors, the LED, the buttons, the
 pins the library already owns, and what is left for you. There is no
 `chipguy_*_board` library for them — the display library is the only one — so this
-file lives here. Power is in [README-power.md](README-power.md), sound in
-[README-sound.md](README-sound.md), the card slot in [README-sdcard.md](README-sdcard.md),
-how a sketch tells the boards apart in [README-board-detection.md](README-board-detection.md),
+file lives here. Power is in [README-power-ESP32.md](README-power-ESP32.md), sound in
+[README-sound-ESP32.md](README-sound-ESP32.md), the card slot in [README-sdcard-ESP32.md](README-sdcard-ESP32.md),
+how a sketch tells the boards apart in [README-board-detection-ESP32.md](README-board-detection-ESP32.md),
 and the electronics behind any figure here in [README-engineering.md](README-engineering.md).
 
 > **Coverage.** The connectors, LED and free-pin sections below describe the
@@ -41,9 +44,9 @@ What else each one has, by `display.model()` (the `BoardDetect` example shows it
 | `CYDR_MODEL_32E_35_40` | **yes** | **GPIO34** = cell ÷ 2 | no | yes | **yes**, GPIO4, LOW = on |
 | `CYDR_MODEL_024` | **yes** | none | **yes**, GPIO34 | yes | no — always on |
 | `CYDR_MODEL_035` | **yes** (SW1, as the ESP32-024) | none | **yes**, GPIO34 | yes | no — GPIO4 is the red LED |
-| `CYDR_MODEL_2432S032`, `_2432S032C` | **yes** (SW1; off by double press or 10-s hold, by IP5306 variant — [README-power.md](README-power.md)) | none | **yes**, GPIO34 | yes | no — always on (schematic) |
+| `CYDR_MODEL_2432S032`, `_2432S032C` | **yes** (SW1; off by double press or 10-s hold, by IP5306 variant — [README-power-ESP32.md](README-power-ESP32.md)) | none | **yes**, GPIO34 | yes | no — always on (schematic) |
 | `CYDR_MODEL_3248S035C` | no — micro-USB only | N/A | **yes** (photoresistor fitted; GPIO34 reads 142 mV in room light) — dark reading **TODO (bench)** | **TODO (bench)** | **TODO (bench)** |
-| `CYDR_MODEL_2432S024C`, `_JC2432W328` | **yes** (SW1; off by a 10-s hold on both — [README-power.md](README-power.md)) | **TODO (bench)** | likely — GPIO34 reads 142 mV in room light, as on the other light-sensor boards; **TODO (bench)** | **TODO (bench)** | no — GPIO4 is the red LED |
+| `CYDR_MODEL_2432S024C`, `_JC2432W328` | **yes** (SW1; off by a 10-s hold on both — [README-power-ESP32.md](README-power-ESP32.md)) | **TODO (bench)** | likely — GPIO34 reads 142 mV in room light, as on the other light-sensor boards; **TODO (bench)** | **TODO (bench)** | no — GPIO4 is the red LED |
 
 All four 32E boards read the same battery the same way: one charged cell moved to
 connector to connector read 2.07 V on GPIO34 on each, about 4.14 V at the cell; with no
@@ -73,7 +76,7 @@ ESP32-2432S032C and ESP32-3248S035C (GT911), and the ESP32-2432S024C and the JC2
 driver reads their touch chip over I²C on SDA 33 / SCL 32. On those boards **GPIO32 and
 33 are taken**, and the backlight is GPIO27. A capacitive chip on another board is
 still driven, but the board is reported as unknown — see
-[README-board-detection.md](README-board-detection.md#capacitive-boards).
+[README-board-detection-ESP32.md](README-board-detection-ESP32.md#capacitive-boards).
 
 **USB-C cables (32E 2.8").** The board's USB-C socket has a wiring shortcut that makes it
 look like an audio accessory to "smart" (e-marked) cables, which then refuse to power
@@ -103,7 +106,7 @@ out both the wiring and the panel, so none of this needs setting by hand:
   The panel alone decides the screen size.
 
 Both take well under a millisecond, and rotation, color and touch are then set up to
-match. [How it works and what a sketch can ask](README-board-detection.md).
+match. [How it works and what a sketch can ask](README-board-detection-ESP32.md).
 
 ```cpp
 display.panel();       // CYDR_PANEL_ILI9341 / _ST7789 / _ST7796, after begin()
@@ -118,7 +121,7 @@ display.model();       // CYDR_MODEL_024, _035, _2432S028, _2432S032, _2432S032C
 display.modelName();   // "ESP32-024 2.4\"", ...
 display.diagonalTenths(); // 24, 28, 32, 35, 40; 0 for the 32E 3.5" / 4.0" unless the size override names it
 display.touchChip();   // CYDR_TOUCH_XPT2046, _GT911 or _CST820
-display.powerOffHint(); // "hold SW1 for 10 s", ... or nullptr — README-power.md
+display.powerOffHint(); // "hold SW1 for 10 s", ... or nullptr — README-power-ESP32.md
 display.setPanel(CYDR_PANEL_ST7789);   // before begin(): skip panel detection, force a type
 ```
 
@@ -165,10 +168,10 @@ battery, no battery lead, no speaker. Buy or make MX1.25 pigtails. Pins are list
 | Connector | Pins, from pin 1 | Notes |
 |---|---|---|
 | **UART** (4-pin) | 5V, GND, TXD (GPIO1), RXD (GPIO3) | **5V is bidirectional:** feed 5 V in here and the board runs and charges as if on USB (reverse polarity is blocked); with USB plugged in, it *outputs* USB 5 V for an external device. On battery alone it is dead. Don't power USB and this pin from two supplies at once. **RXD does not work** — the USB bridge chip drives the same line harder, on battery too. TXD out is fine. |
-| **SPI** (4-pin) | IO23 (MOSI), IO19 (MISO), IO18 (SCK), **IO27 (CS)** | The microSD card's bus with a spare chip-select — the way to add an SPI device. See [README-sdcard.md](README-sdcard.md#bus-sharing). **If you aren't using the SD card, these are four free GPIOs** — the place for an I²C sensor (below). IO27 has no pull-up on the board and is shared with nothing else. No power pins on this header; take 3.3V and GND from the unlabeled one. |
+| **SPI** (4-pin) | IO23 (MOSI), IO19 (MISO), IO18 (SCK), **IO27 (CS)** | The microSD card's bus with a spare chip-select — the way to add an SPI device. See [README-sdcard-ESP32.md](README-sdcard-ESP32.md#bus-sharing). **If you aren't using the SD card, these are four free GPIOs** — the place for an I²C sensor (below). IO27 has no pull-up on the board and is shared with nothing else. No power pins on this header; take 3.3V and GND from the unlabeled one. |
 | unlabeled (4-pin) | 3.3V, IO35, (blank), GND | IO35 is a free **input-only** pin with no pull-up on the board and no internal pull-up available — good for an analog input or a signal something else drives; a switch to GND needs its own pull-up resistor. 3.3V is the regulator's output; don't feed 3.3 V *in* here. |
-| **speaker** (2-pin) | SP+, SP− | Amplifier output; 4–8 Ω speaker. Neither pin is ground. See [README-sound.md](README-sound.md). |
-| **battery** (2-pin) | **BAT+**, GND | One lithium cell. **Pin 1 (positive) is the pin nearer the card slot.** Cheap pigtails come wired both ways — check before plugging in; there is no reverse-polarity protection on the battery input. See [README-power.md](README-power.md). |
+| **speaker** (2-pin) | SP+, SP− | Amplifier output; 4–8 Ω speaker. Neither pin is ground. See [README-sound-ESP32.md](README-sound-ESP32.md). |
+| **battery** (2-pin) | **BAT+**, GND | One lithium cell. **Pin 1 (positive) is the pin nearer the card slot.** Cheap pigtails come wired both ways — check before plugging in; there is no reverse-polarity protection on the battery input. See [README-power-ESP32.md](README-power-ESP32.md). |
 
 ## LED, buttons and other on-board I/O
 
@@ -176,11 +179,11 @@ battery, no battery lead, no speaker. Buy or make MX1.25 pigtails. Pins are list
 |---|---|---|
 | RGB LED, red | **22** | Common-anode, **active LOW** — `LOW` lights it, `HIGH` turns it off. (Confirmed. On the 2432S028, ESP32-024 and ESP32-035 red is GPIO4; `display.redLedPin()` returns the right one.) |
 | RGB LED, green / blue | 16 / 17 | Same polarity. (Confirmed.) Neither pin is shared with anything else. On the ESP32-024 and ESP32-035 they are the other way round; `display.greenLedPin()` / `blueLedPin()` return the right ones. |
-| Audio amplifier enable | **4** | **LOW = amplifier on.** A pull-up holds it off at reset. See [README-sound.md](README-sound.md). |
-| Battery voltage | **34** | Analog input, input-only: reads half the cell voltage. See [README-power.md](README-power.md#battery-measurement). |
+| Audio amplifier enable | **4** | **LOW = amplifier on.** A pull-up holds it off at reset. See [README-sound-ESP32.md](README-sound-ESP32.md). |
+| Battery voltage | **34** | Analog input, input-only: reads half the cell voltage. See [README-power-ESP32.md](README-power-ESP32.md#battery-measurement). |
 | BOOT button | 0 | Pulled up; reads LOW when pressed. Usable as a UI button and as a deep-sleep wake source. It is also the strapping pin: holding it through a reset enters the bootloader instead of your sketch. |
 | RST button | — | Resets the chip (EN). Not visible to software. |
-| Touch interrupt | 36 | The touch controller's pen-down line, LOW while the screen is pressed. The library reads it as an input; a sketch can also use it as a deep-sleep wake source. See [README-power.md](README-power.md#shutting-down-sleeping-waking). |
+| Touch interrupt | 36 | The touch controller's pen-down line, LOW while the screen is pressed. The library reads it as an input; a sketch can also use it as a deep-sleep wake source. See [README-power-ESP32.md](README-power-ESP32.md#shutting-down-sleeping-waking). |
 | Backlight | 21 | Driven by `display.setBacklight(0..100)`. (GPIO27 on the shared-touch boards.) |
 
 At reset the three LED pins float and the LED may glow dimly; a sketch that cares
@@ -223,7 +226,7 @@ classic ESP32. The touch row is what changes on the shared-touch boards (see
   This is the header's labeled purpose. Both of the ESP32's general-purpose SPI hosts
   are already in use (display on one, card on the other), so a new device joins the
   card's bus rather than getting a host of its own — see
-  [README-sdcard.md](README-sdcard.md#spi-hosts-already-in-use). IO27 has no pull-up,
+  [README-sdcard-ESP32.md](README-sdcard-ESP32.md#spi-hosts-already-in-use). IO27 has no pull-up,
   so drive it HIGH early in `setup()` so the device isn't selected while the card
   mounts.
 - **Plain GPIOs on the SPI header** — with no card and no SPI device, IO23, IO19, IO18
@@ -252,10 +255,10 @@ everything here exactly as on the 32E 2.8" except where the table says otherwise
 | GPIO4 | red LED | amplifier enable, LOW = on (MP3Player works) | amplifier enable (inferred from its pull-up) | red LED |
 | Speaker amplifier | always on, no enable | switchable | **TODO (bench)** | always on, no enable — `MP3Player` plays cleanly |
 | GPIO34 | light sensor (0 in light; ≈1.67 V in the dark) | battery, cell ÷ 2 (confirmed) | battery, cell ÷ 2 (confirmed on both) | light sensor (0 in light; ≈0.64 V in the dark) |
-| microSD | GPIO5 / 18 / 19 / 23, as on the 32E 2.8" — `MP3Player` mounts it | same — `MP3Player` mounts it | same — `MP3Player` mounts it on both. See [README-sdcard.md](README-sdcard.md#every-board-the-same-four-pins) | same — `MP3Player` mounts it |
+| microSD | GPIO5 / 18 / 19 / 23, as on the 32E 2.8" — `MP3Player` mounts it | same — `MP3Player` mounts it | same — `MP3Player` mounts it on both. See [README-sdcard-ESP32.md](README-sdcard-ESP32.md#every-board-the-same-four-pins) | same — `MP3Player` mounts it |
 | GPIO25, 32, 39 | touch | not used by the library; 25 and 32 have pull-ups on the board — **TODO (bench):** where they go | not used by the library; **TODO (bench)** | not used by the library. 32 and 33 carry 4.7 kΩ pull-ups and 25 a reset line, all for a capacitive-touch connector not fitted on resistive boards (schematic). 39 is unconnected |
 | GPIO21, 22, 35 | 21 backlight; 22 and 35 on headers | 21 floats — **TODO (bench):** brought out anywhere? | **TODO (bench)** | **CN1** (labelled for a temperature / humidity sensor): 3.3V, IO21, IO22, GND, with a 10 kΩ pull-up on IO21 — an I²C sensor port, `Wire.begin(21, 22)` (add a pull-up on IO22). **P3**: IO21, IO22, IO35, GND (schematic) |
-| Battery, charger | none — USB or the VIN pin only | yes; GPIO34 battery reading confirmed | yes; GPIO34 battery reading confirmed | battery connector and an FM5324GA charger / 5 V booster; no battery reading — see [README-power.md](README-power.md) |
+| Battery, charger | none — USB or the VIN pin only | yes; GPIO34 battery reading confirmed | yes; GPIO34 battery reading confirmed | battery connector and an FM5324GA charger / 5 V booster; no battery reading — see [README-power-ESP32.md](README-power-ESP32.md) |
 | Third button | — | — | — | **SW1**, the FM5324GA's power key, not wired to the ESP32 (schematic; no GPIO changed when pressed) |
 
 **ESP32-035 in short.** The 32E 3.5"'s screen and touch wiring (backlight GPIO27, ST7796,
@@ -269,7 +272,7 @@ the back. What one unit showed on USB power (2026-10-23):
   both pulls, plus ADC on 34 / 35 / 36 / 39). It is the battery chip's key and behaves
   as the ESP32-024's: on battery alone the board stays off until one press of SW1,
   and two quick presses turn it off (2026-10-23;
-  [details](README-power.md)). **TODO (bench):** which charger chip is fitted.
+  [details](README-power-ESP32.md)). **TODO (bench):** which charger chip is fitted.
 - **GPIO21** is pulled up on the board (as on the ESP32-024); 22, 25 and 26 float; 0, 5,
   19, 23, 32 and 33 are pulled up. **TODO (bench):** whether 21 / 22 / 35 reach a header
   as on the ESP32-024.
@@ -290,7 +293,7 @@ reading.
 **ESP32-024 in short.** The 3.2"'s display and touch wiring with the 2432S028's LED and
 sound: backlight on GPIO27, touch on the display bus, red LED on GPIO4, an amplifier
 that is always on. The library tells it apart from the 3.2" by GPIO4
-([how](README-board-detection.md)), and sets its screen and touch up differently.
+([how](README-board-detection-ESP32.md)), and sets its screen and touch up differently.
 It comes with either of two screens. With the ST7789 the library turns color inversion
 off and swaps touch X and Y. With the ILI9341 (one unit, 2026-10-23) touch is laid out
 as on the 3.2", with both axes reversed and no swap. Its copper reads "ESP32-024"; sellers call it
@@ -305,7 +308,7 @@ on the C), a light sensor on GPIO34, an amplifier on GPIO26 that is always on, a
 battery connector with an IP5306 charger whose power key is SW1, and no battery
 reading (schematic, *ESP32-2432S032-MCU-V1.0* and *-LCM-V1.0*). SW1 turns the board on
 with one press and off with either two quick presses or a 10-second hold, depending on
-the IP5306 variant fitted ([details](README-power.md)). `MP3Player` mounts the card and plays through the
+the IP5306 variant fitted ([details](README-power-ESP32.md)). `MP3Player` mounts the card and plays through the
 speaker on both, the amplifier needing no switch (2026-10-29). The screen needs color
 inversion on, as on the 3.2", and touch is laid out as on the 3.2", both axes reversed.
 **CN1** carries 3.3V, IO21 (10 kΩ pull-up), IO22, GND and **P3** IO21, IO22, IO35, GND,
@@ -323,7 +326,7 @@ on `Wire1` and leaves `Wire` free. The backlight is on GPIO27, and the RGB LED i
 The 2432S024C has an ILI9341. On it, GPIO21 is the touch chip's interrupt line, so treat
 21 as taken. The JC2432W328 has an ST7789 with color inversion off, and its parts are
 laid out like a smaller ESP32-2432S032. One unit of each was checked, 2026-10-31.
-Both carry what looks like the 2432S032's IP5306 power chip ([README-power.md](README-power.md)). **TODO (bench):** the battery reading, the amplifier, the headers,
+Both carry what looks like the 2432S032's IP5306 power chip ([README-power-ESP32.md](README-power-ESP32.md)). **TODO (bench):** the battery reading, the amplifier, the headers,
 and where the JC2432W328's touch interrupt goes.
 [Details](README-engineering.md#the-cst820-boards).
 

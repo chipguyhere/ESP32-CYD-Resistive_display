@@ -27,9 +27,13 @@
  * left/right = prev/next, bottom = stop, top = back (Menu), dragging around the
  * ring = volume.  Tapping the little LCD also returns to this screen.
  *
- * A small "8" in the click-wheel screen's lower-right corner, long-pressed,
- * opens a third screen with the dither A/B checkbox for the 8-bit quantizer and
- * a one-line explanation of what it trades.  Back returns to the click-wheel
+ * A small digit in the click-wheel screen's lower-right corner, long-pressed,
+ * opens a third screen about the board's sound output.  On the classic ESP32
+ * it is an "8" -- the 8-bit DAC -- and the screen holds the dither A/B
+ * checkbox and a one-line explanation of what it trades.  On the ESP32-C5 it
+ * is a "1": the output is a 1-bit stream, and the screen explains how that
+ * becomes sound; there is nothing to dither.  On the ESP32-S3 it is a "16":
+ * the ES8311 codec takes the full 16 bits.  Back returns to the click-wheel
  * screen.
  *
  * Everything here runs on the LVGL (Arduino loop) task.  The player lives on
@@ -39,6 +43,7 @@
 
 #include "ui.h"
 #include "player.h"
+#include "platform.h"      // platform_output_bits()
 #include <math.h>
 
 static lv_obj_t *mainScreen;
@@ -58,7 +63,9 @@ static lv_obj_t *clickwheelState;
 static lv_obj_t *clickwheelProgress;
 static uint32_t volumeFlashUntil = 0;     // show "Volume NN%" on the info line until then
 
-// Dither screen, reached by long-pressing the "8" on the click-wheel screen.
+// Sound screen, reached by long-pressing the "8" (ESP32), "1" (ESP32-C5) or
+// "16" (ESP32-S3)
+// on the click-wheel screen.
 static lv_obj_t *ditherScreen;
 
 static std::vector<lv_obj_t *> trackButtons;
@@ -284,21 +291,38 @@ static void build_dither_screen() {
 
     lv_obj_t *heading = lv_label_create(ditherScreen);
     lv_obj_set_style_text_font(heading, font(16), 0);
-    lv_label_set_text(heading, "8-bit sound");
+    const int bits = platform_output_bits();
+    lv_label_set_text_fmt(heading, "%d-bit sound", bits);
 
     lv_obj_t *explain = lv_label_create(ditherScreen);
     lv_obj_set_width(explain, lv_pct(100));
     lv_label_set_long_mode(explain, LV_LABEL_LONG_WRAP);
-    lv_label_set_text(explain,
-        "This CYD has an 8 bit sound generator that may sound tinny or robotic, "
-        "the dither option trades that for faint static instead.\n\n"
-        "(TPDF dither: random noise added before rounding to 8 bits, shaped "
-        "toward frequencies the speaker barely reproduces.)");
+    if (player_has_dither()) {
+        lv_label_set_text(explain,
+            "This CYD has an 8 bit sound generator that may sound tinny or robotic, "
+            "the dither option trades that for faint static instead.\n\n"
+            "(TPDF dither: random noise added before rounding to 8 bits, shaped "
+            "toward frequencies the speaker barely reproduces.)");
 
-    lv_obj_t *ditherBox = lv_checkbox_create(ditherScreen);
-    lv_checkbox_set_text(ditherBox, "Dither");
-    if (player_dither()) lv_obj_add_state(ditherBox, LV_STATE_CHECKED);
-    lv_obj_add_event_cb(ditherBox, dither_cb, LV_EVENT_VALUE_CHANGED, nullptr);
+        lv_obj_t *ditherBox = lv_checkbox_create(ditherScreen);
+        lv_checkbox_set_text(ditherBox, "Dither");
+        if (player_dither()) lv_obj_add_state(ditherBox, LV_STATE_CHECKED);
+        lv_obj_add_event_cb(ditherBox, dither_cb, LV_EVENT_VALUE_CHANGED, nullptr);
+    } else if (bits == 16) {
+        lv_label_set_text(explain,
+            "This board has a real audio chip (an ES8311 codec). The music "
+            "reaches it at its full 16 bits, and the volume is set inside "
+            "the codec, so nothing is lost at low volume and there's "
+            "nothing to dither.");
+    } else {
+        lv_label_set_text(explain,
+            "This board's chip has no sound generator. Its speaker pin is "
+            "only ever on or off: 6 million times a second, in a pattern "
+            "whose average follows the music.\n\n"
+            "A small filter on the board smooths that into sound. The "
+            "music goes in at its full 16 bits, so there's no rounding "
+            "to dither.");
+    }
 
     lv_obj_t *back = lv_button_create(ditherScreen);
     lv_obj_set_size(back, px(90), px(40));
@@ -426,8 +450,10 @@ static void build_clickwheel_screen() {
     // player.  Long-press it for the dither screen.  The label is a box about
     // six characters wide with the glyph right-aligned inside it, so the touch
     // target is a comfortable size while the "8" itself sits in the corner.
+    // On the ESP32-C5 it is a "1": the output is a 1-bit PDM stream; on the
+    // ESP32-S3 a "16": the ES8311 codec takes 16-bit samples.
     lv_obj_t *eight = lv_label_create(clickwheelScreen);
-    lv_label_set_text(eight, "8");
+    lv_label_set_text_fmt(eight, "%d", platform_output_bits());
     lv_obj_set_style_text_font(eight, font(16), 0);
     lv_obj_set_style_text_color(eight, lv_color_hex(0xA0A0A0), 0);
     lv_obj_set_style_text_align(eight, LV_TEXT_ALIGN_RIGHT, 0);

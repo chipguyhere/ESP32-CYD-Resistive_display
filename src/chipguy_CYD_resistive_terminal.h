@@ -75,7 +75,7 @@
 // Task stack, bytes.  The task keeps its frames small; check the margin on
 // your build with stackHighWater().
 #ifndef CYDR_TERM_STACK_BYTES
-#define CYDR_TERM_STACK_BYTES 2560
+#define CYDR_TERM_STACK_BYTES 3072   // 2560 before the task also sampled touch
 #endif
 // Task priority (the Arduino loop task runs at 1) and core.  The default,
 // -1, is the core the display's SPI interrupt runs on (display.spiCore()):

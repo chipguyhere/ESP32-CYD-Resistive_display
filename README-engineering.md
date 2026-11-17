@@ -1,15 +1,20 @@
 # Resistive-touch CYD boards — engineering notes
 
-The derivations behind the numbers quoted in [README-power.md](README-power.md),
-[README-board.md](README-board.md), [README-sound.md](README-sound.md) and
-[README-sdcard.md](README-sdcard.md), and the inner workings of the
+The derivations behind the numbers quoted in [README-power-ESP32.md](README-power-ESP32.md),
+[README-board-ESP32.md](README-board-ESP32.md), [README-sound-ESP32.md](README-sound-ESP32.md) and
+[README-sdcard-ESP32.md](README-sdcard-ESP32.md), and the inner workings of the
 [text terminal](#text-terminal) described in [README-terminal.md](README-terminal.md).
 Those files state what the board does and what a
 sketch must do about it; this one shows the schematic reading, the datasheet figures
 and the arithmetic that got there, so anyone who doubts a figure can check it or
 replace it with a measurement.
 
-The power, sound and card-slot sections are the **ESP32-32E 2.8"**'s, the board whose
+The **NM-CYD-C5** (ESP32-C5) has its own chapter,
+[NM-CYD-C5 (ESP32-C5)](#nm-cyd-c5-esp32-c5); everything before it is about the classic
+ESP32 boards, except [touch sampling between display writes](#touch-sampling-between-display-writes),
+which applies to every board where touch shares the display's bus.
+
+The classic power, sound and card-slot sections are the **ESP32-32E 2.8"**'s, the board whose
 schematic was read. The other boards appear where the bench has said something about
 them: [board wiring](#two-wirings-and-how-begin-tells-them-apart), the
 [3.2" panel](#the-32-panel), [GPIO4](#telling-gpio4s-two-jobs-apart), and the
@@ -19,7 +24,7 @@ ESP32-035's [light sensor](#light-sensor).
 **Sources.** This board's schematic as read for these notes; part datasheets (TP4054,
 ME6217, SL2305 / SI2305, B5819W, SC8002B / LM4871, CH340C, XPT2046, ILI9341, ST7789); the ESP32
 Arduino core 3.x / ESP-IDF 5.x driver sources; and the sibling board's write-up
-(`../chipguy_cyd2432S028_display/README-power.md` and `README-sound.md`), where the
+(`../chipguy_cyd2432S028_display/README-power-ESP32.md` and `README-sound-ESP32.md`), where the
 DAC path was worked out by ear on 2026-09-18. **Nothing on this board has been put on a
 meter or a scope yet**; every current, voltage and corner frequency below is inferred,
 and the topic files carry a `**TODO (bench):**` wherever that matters. The list at the
@@ -56,7 +61,7 @@ ships with the board.
 
 ### Telling GPIO4's two jobs apart
 
-[README-board-detection.md](README-board-detection.md#red-led-gpio4s-voltage) states
+[README-board-detection-ESP32.md](README-board-detection-ESP32.md#red-led-gpio4s-voltage) states
 what `cydr_redLedPin()` does; this is why it works. Readings with
 `analogReadMilliVolts()` (one unit each, 2026-10-13; the pull-down column was
 re-measured on the 2432S028, 3.2" and 4.0" through the library's own probe — 1643,
@@ -1140,8 +1145,9 @@ that case.
 
 ### Resources
 
-The task's stack is 2,560 bytes; the most it has used in any example is 1,316
-(`stackHighWater()` reports the margin). Static RAM: cells 120 B, DMA buffer 1,280 B,
+The task's stack is 3,072 bytes. A step peaks at about 1.3 KB; a touch sample between
+steps (median buffers, polled SPI) runs on the same stack, and the rest is its margin.
+**TODO (bench):** the combined peak, from `stackHighWater()`. Static RAM: cells 120 B, DMA buffer 1,280 B,
 stack, TCB and two semaphores — about 4.5 KB in all, with no heap use after
 `begin()`. The task runs at priority 10 on the core the SPI bus's interrupt was
 allocated on, `display.spiCore()` (the core `display.begin()` ran on; override with
@@ -1156,6 +1162,563 @@ in it or a usage pattern of ours (acquire, queued DMA, polled commands in betwee
 that it only mishandles across cores. **TODO:** a minimal repro to tell which. Same-core scroll speeds: 122 / 58 lines/s fast / clean
 at 240 wide, 97 / 49 at 320 wide.
 
+## Beam chasing
+
+How the `RasterBouncingBalls` example sends frames that never tear, and the driver
+calls it relies on: `spiDevice()`, `setWindow()`, `changeSpiClock()`,
+`readCommand()`, the refresh steps, and the NVS records for the speed test and the
+refresh choice.
+
+### The condition
+
+The panel scans its frame memory on its own oscillator: row *r* is read at
+*S* + (*a* + *r*)·*L* and again one refresh *P* = *N*·*L* later (*S* the moment the
+line counter is 0, *L* one line, *N* lines a refresh, *a* the blank lines before the
+first row). A row written at *t*(*r*) shows from the first scan after it. The whole
+area changes on one refresh — no tear — if every row is written between its scans on
+two successive passes:
+
+0 < *t*(*r*) − (*S* + (*a* + *r*)·*L*) < *P* for every row.
+
+Sending rows at *w* each from *t*₀, that difference moves by (*w* − *L*) per row, so
+over the *B* rows of the ball area it spans |*B*·(*w* − *L*)|. That span, plus a guard
+each side, must fit in *P*; *t*₀ is then placed so the span is centred in the window.
+The guard is 300 µs of wake-up latency, half the blank lines (where in the blanking
+row 0 starts isn't known), and three times the scan model's RMS scatter. A frame takes
+one refresh if the send plus LVGL's share fits in *P*, two if it fits in 2*P*. The span
+condition is the binding one: a writer much slower than the scan is lapped however
+it is started.
+
+### The scan line (0x45)
+
+Read with `readCommand(0x45, buf, 4)` at 4 MHz. The reply's layout differs between
+controllers, so the example tries every bit offset for the 16-bit field
+`000000 L9..L0` and keeps the one that counts steadily through every line. All three
+controllers answer with **one dummy clock** before the field (2026-11-17):
+
+| Controller | Lines a refresh | Back-to-back readings stepping forward | Fit residual |
+|---|---|---|---|
+| ILI9341 | 324 (320 rows + 4) | 100 % | 0.6–1.5 lines |
+| ST7789 | 334 (320 + 14) | 93–94 % | 3.5–3.7 lines |
+| ST7796 | 484 (480 + 4) | 99.6 % | 2.3–3.4 lines |
+
+The ST7789's counter steps unevenly, so detection accepts a score of 0.8; it still
+tracks to within 1–2 lines while running. Detection doesn't require every line to be
+seen, only an eighth of them. On the ES3C28P one read has been seen to take about three
+lines' time, and then half the lines never come up.
+
+The model is a least-squares line of unwrapped line number against `esp_timer` time,
+over 2 s of back-to-back reads (about 19,000). Across any pause in the reads — the
+example redraws a progress row of dots — the unwrap predicts the line from the slope
+fitted so far and takes the nearest wrap; counting forward from the last reading
+instead loses whole refreshes. Just before the balls start, the scan is timed again
+for 0.5 s: the first fit is several seconds old by then, and a 0.2 % rate error
+grows to hundreds of lines in that time.
+
+While running, the raster task reads 0x45 once after each frame's ball transfer and
+moves the model a third of the way to the reading, and the line time by 5 % of the
+error per refresh elapsed. The readings stay within 0.2–0.5 lines RMS of the model.
+
+The scan is assumed to read frame-memory rows in ascending order in rotation 0 (MADCTL
+MY clear), and the timing runs clean on all three controllers on that assumption.
+**TODO (bench):** look at the ST7789 and ST7796 boards for a tear — the timing can't
+tell whether the scan runs the other way. With MY set by an override the example
+doesn't try.
+
+### Results across boards
+
+`RasterBouncingBalls`, 100 see-through balls, 16-row chunks × 3, 2026-11-17. "Rate" is
+the panel's refresh as measured; every run had 0 late chunks.
+
+| Board | Panel | Clock | Rate | Ball area send | Result |
+|---|---|---|---|---|---|
+| ESP32-2432S028 | ILI9341 | 40 MHz | 94.6 Hz | 240 × 240: 23.4 ms | Not tear-free at stock; slowed to 66.7 Hz: 33 fps, a frame every two refreshes |
+| ESP32-32E 2.8" | ILI9341 | 40 MHz | 95.2 Hz | 240 × 240: 23.5 ms | Not tear-free at stock; slowed to 63.5 Hz: 32 fps, a frame every two refreshes |
+| ESP32-2432S032 | ST7789 | 80 MHz | 59.2 Hz | 240 × 240: 11.9 ms | 59 fps |
+| ESP32-2432S032C | ST7789 | 40 MHz | 60.3 Hz | 240 × 240: 23.4 ms | 30 fps (half rate); the slowest ST7789 step, 39.6 Hz, misses one frame per refresh by 10 µs |
+| ESP32-32E 2.8" | ST7789 | 80 MHz | 59.8 Hz | 240 × 240: 11.9 ms | 60 fps |
+| NM-CYD-C5 | ST7789 | 80 MHz | 59.9 Hz | 240 × 240: 11.8 ms | 60 fps, one core |
+| ESP32-32E 3.5"/4.0" (two) | ST7796 | 80 MHz | 57.6, 59.2 Hz | 320 × 400: 26.2 ms | 29–30 fps (half rate) |
+| ES3C28P (ESP32-S3) | ILI9341V IPS | 40 MHz | 82.2 Hz | 240 × 240: 23.5 ms | Not tear-free at stock; slowed to 69.4 Hz: 35 fps, a frame every two refreshes |
+
+At 80 MHz the ST7789 boards keep up at their stock rate, so the demo offers no slower
+refresh, and the ST7789's refresh steps have not been measured. Slowing an ST7789
+further than FRCTRL2 allows would take longer porches (PORCTRL, 0xB2). The ST7796 boards need two
+refreshes per frame for a 400-row area; the ST7796 has no steps to offer.
+
+### The ESP32-2432S028's numbers
+
+| | |
+|---|---|
+| Stock refresh (FRMCTR1 `00 18`) | 94.5 Hz, 32.66 µs a line |
+| 80 MHz speed test | failed: 468 of 1,844 windows wrong |
+| Send at 40 MHz, 16-row chunks | 97.3 µs a row, 75 µs for the window commands; 23.4 ms for 240 rows |
+| Drift over 240 rows at stock | 15.5 ms against a 10.6 ms refresh: not tear-free |
+| Tear-free threshold | below about 71–74 Hz (half rate); full rate needs the send inside one refresh |
+| Refresh chosen | FRMCTR1 `01 11` (24/34 of stock): 66.7 Hz, a frame every two refreshes, 33 fps tear-free, 0 late chunks, 100 see-through balls. One frame per refresh fits from 37.8 Hz (`01 1E`), but flickers visibly |
+
+The 80 MHz failure is not the 2-mod-4 DMA fault ([The SPI clock](#the-spi-clock)):
+`stressTest()` goes through `flushRegion()`, which splits odd-length transfers. The
+ILI9341 is rated for 10 MHz writes; this unit doesn't take 80.
+
+Drawing a 16-row chunk of 100 see-through balls takes 280–600 µs against about
+1,550 µs to send it. The renderer isn't the limit; the bus is. The classic ESP32's
+LX6 has no SIMD (MAC16, MIN / MAX and zero-overhead loops don't work on packed
+16-bit pixels), so the renderer's two-pixels-a-word arithmetic is the practical
+ceiling.
+
+### Refresh steps
+
+`refreshStepRatio()` turns each controller setting into a ratio to the stock rate. The
+stock rate itself has to be measured: the oscillator varies by panel.
+
+- **ILI9341**, FRMCTR1 (0xB1): rate ∝ 1 / (DIVA · RTNA), with DIVA 1/2/4/8 and RTNA
+  16–31 clocks a line. Init writes `00 18` (`00 1B` on the S3's IPS ILI9341V). The
+  steps are the distinct products at or above the stock one. Checked: `01 1F` measured
+  36.65 Hz against 94.53 · 24/62 = 36.59 predicted; on the ES3C28P (stock 27 clocks,
+  82.71 Hz) the chosen step measured 38.55 Hz against 38.5 predicted.
+- **ST7789**, FRCTRL2 (0xC6): a line of 250 + 16·RTNA clocks, power-on 0x0F.
+  **TODO (bench):** check the ratio against a measurement.
+- **ST7796**: not offered. **TODO (bench):** its FRMCTR1 layout (FRS and DIVA) is
+  different from the ILI9341's and needs checking against a measurement first.
+
+The example offers one slower step. If the step giving the most frames per second runs
+one frame per refresh, it looks for the fastest step that runs one frame every two
+refreshes, at least 1.5 times as fast, and offers that instead: nearly the same frames
+per second, with much less flicker (on the 2432S028, 66.7 Hz at 33 fps rather than
+37.8 Hz at 38). Every step is judged as if the panel ran 2 % faster than predicted: a step's real rate comes out a little off (39.48 Hz
+measured against 39.4 predicted on one board), and the oscillator drifts with
+temperature. A step that only just fitted one frame per refresh would otherwise fall to
+one frame per two.
+
+`setRefreshStep()` refuses anything under `CYDR_MIN_REFRESH_HZ` (30 Hz). That floor is
+a conservative choice, not a datasheet limit: below it each pixel holds its charge
+long enough for flicker, and DC stress on the liquid crystal, to grow. `begin()` always
+leaves the stock rate (a software reset restores it). A choice the user accepts is
+saved in NVS (namespace `cydrforce`, key `refresh`: the step, the stock rate it was
+measured against, and the rate it gave). Only `applyRefreshChoice()` applies it.
+
+Slower refreshes degrade 1-pixel checkerboards, stripes and 50 % greys first; the
+example's test-pattern page shows those four, with Flip to compare against stock. On
+the 2432S028 at 39 Hz the user judged the constant flicker worse than the tearing it
+removed (2026-11-17), which is why the choice is never made for a sketch.
+
+### Tasks and the bus
+
+- **Raster task**, `configMAX_PRIORITIES − 4`, on `display.spiCore()`. It wakes on an
+  `esp_timer` one-shot at *t*₀ and sends the ball area as chunk DMAs, two in flight. A
+  chunk not drawn by its deadline drops the rest of the frame: those rows keep the
+  previous frame's pixels, counted as *late*. Then it reads 0x45 and serves the gap
+  until the next *t*₀.
+- **Render task**, one priority lower: physics once a frame, then each chunk into a
+  free bounce buffer, byte-swapped to big-endian.
+- **LVGL** renders full-width areas only, through an `LV_EVENT_INVALIDATE_AREA` rounder
+  that changes the x coordinates only. LVGL also sends that event with a trial area
+  from row 0 to size its render chunks, so a rounder that moves rows breaks the
+  buffer sizing (`layer_reshape_draw_buf` asserts). Rows in the ball area are dropped
+  in the flush instead. The flush hands its rows to the raster task and blocks until
+  they're sent.
+
+**The gap.** LVGL rows go first: any waiting job is taken, and rows are sent while a
+whole row still fits. The touch sample comes after, unless it has missed three gaps
+in a row. While LVGL has rows waiting, the 0x45 reading is skipped every other frame.
+If LVGL has had rows waiting for three gaps without getting one, eight rows go out
+regardless, past the deadline. That frame then starts a refresh late: a repeated
+frame (a stutter), never a tear, because a missed start moves to the next refresh's
+slot. The plan reserves time for 16 LVGL rows, two window commands and the scan read
+in every frame, so a slower refresh is only suggested if LVGL keeps a turn.
+
+**Reports and the watchdog.** The render task reports every chunk it is asked for,
+either drawn (a buffer) or abandoned (it saw the frame dropped). The raster task
+publishes the frame it is sending; a render task behind it abandons its frame and
+jumps to that one. Without that, an overrun leaves the render task a frame or more
+behind for good, and every chunk it delivers is for a frame already dropped.
+
+The raster task watches those reports. If the render task goes 250 ms without one
+while a frame waits, or 20 frames in a row are late, it is taken to be running
+overtime at a priority above LVGL's and starving it. The raster task then switches
+the render task's priority between its own level and one below LVGL's (loop()'s) every
+300 ms. The balls and the LVGL strip freeze by turns: an unmistakable symptom.
+Every 5 s it prints on Serial what is happening and how to stop it. 60 good frames in
+a row restore the priority. `raster_watchdog(false)` turns it off. With the render
+task forced to overrun by 30 ms a chunk (the example's Serial key `h`), it tripped
+within 20 frames and LVGL kept running in the low half of each cycle. Once the overrun
+stopped, the frame rate was back the next second and the priority 1.4 s later
+(2026-11-17).
+
+**Touch.** On boards where touch shares the bus, the raster task calls
+`runTouchSampler()` in the gap, and `touch.setCacheOnly(true)` stops `touch.read()`
+ever sampling the bus itself. A touch read then can't delay a transfer
+([Touch sampling between display writes](#touch-sampling-between-display-writes)).
+
+**Memory.** Bounce buffers: `RASTER_BUFS` × `CHUNK_ROWS` rows of DMA-capable RAM. The
+example's `config.h` has the presets, measured:
+
+| Preset | RAM (240 wide) | 240-row send | At 39 Hz |
+|---|---|---|---|
+| 32 rows × 3 | 46,080 B | 21.7 ms | 39 fps (42 Hz would fit too) |
+| 16 rows × 3 (default) | 23,040 B | 23.4 ms | 39 fps |
+| 8 rows × 2 | 7,680 B | 23.8 ms | 19.5 fps: no longer fits one refresh with LVGL's share |
+| 2 rows × 2 | 1,920 B | 25.7 ms | 19.5 fps |
+
+No late chunks in any of them over 10 s. Per-chunk cost — a transaction and a
+hand-off — is what grows as chunks shrink.
+
+## Touch sampling between display writes
+
+Applies wherever the XPT2046 shares the display's SPI bus: the shared-touch classic
+boards and the NM-CYD-C5.
+
+**The problem it solves.** A read that samples a shared bus itself must first wait for
+the bus. In an LVGL sketch the display's pixel DMA is queued asynchronously, so that
+wait is `display.waitFlush()` — up to a whole render-buffer region (240 × 40 × 2 =
+19.2 KB: 3.8 ms at 40 MHz) — and it falls exactly when it matters: while a finger
+drags, the screen is also redrawing. Then comes the sample itself, about 18 polled
+transfers at 2 MHz. With the text terminal the wait is the terminal task's bus hold.
+
+**The scheme.** The display has a hook, `runTouchSampler()`, called where its bus is
+idle anyway: in `flushRegion()` after the previous region's DMA completes and before
+the next is queued, and in the terminal task between steps. The touch driver installs
+`_samplerHook()` there. It returns at once unless PENIRQ is LOW (a GPIO read) and the
+cached sample is at least `CYDR_TOUCH_SAMPLE_MS` (8 ms) old; otherwise it samples into
+a cache — raw X, raw Y, pressure, pressed, timestamp — under a spinlock. A read checks
+PENIRQ itself (so press and release are immediate), and takes the cached coordinates if
+they are at most `CYDR_TOUCH_CACHE_MS` (50 ms, above LVGL's 33 ms default refresh
+period) old. Only when they are older — nothing is being drawn, so the bus is free —
+does it sample for itself. A mutex keeps the two sides from sampling at once; the
+writer side only tries it (never blocks), the reader waits for it. Calibration,
+rotation and the filters stay on the reader's side, so they apply to cached and fresh
+samples alike. A release invalidates the cache, so a new press never starts from the
+last press's point.
+
+**Measured** on the NM-CYD-C5 with the display at 80 MHz (`setSpiClock()`;
+2026-11-09), an LVGL bar sweeping the screen at the 62.5 fps cap while a finger
+dragged:
+
+| | Read while pressed | Frame rate |
+|---|---|---|
+| Cache off | 615–650 µs | 62.5 fps |
+| Cache on | 30 µs | 62.5 fps |
+
+Every read found a fresh sample (125 of 125 per 2 s). On the C5 the frame rate didn't
+move: at that clock the DMA waits are short, and the ~0.6 ms of sampling has moved into
+the flush path rather than disappeared. What the loop thread gains is never stalling
+for it. The gain should be larger at the default 40 MHz, where regions take twice as
+long to send. **TODO (bench):** the same comparison on a shared-touch
+classic board.
+
+**PENIRQ has to be armed.** The XPT2046 drives PENIRQ only while its last command's
+power-down bits were 00. Every conversion command the driver sends has them at 00,
+but nothing is sent until PENIRQ shows a press — so a chip that comes up with them
+set never reports one. `touch.begin()` therefore sends one Z1 conversion. Without it,
+an LVGL sketch on the NM-CYD-C5 saw PENIRQ stay HIGH under every touch, bus busy or
+idle (bench, 2026-11-09).
+
+---
+
+## NM-CYD-C5 (ESP32-C5)
+
+RockBase IoT / NMTech's ESP32-C5 board in the CYD's format. Source: the vendor's
+`SCH_NM-CYD-C5-v1.0.pdf` (EasyEDA, 2026-03-18), narrated in
+[schematic-description-NM-CYD-C5.md](schematic-description-NM-CYD-C5.md); the vendor's
+README, pin headers and MicroPython config; the ESP32-C5 datasheet v1.1; the core
+3.3.11 sources and `soc_caps.h`. Bench figures are from one unit (MAC
+`3c:dc:75:99:8d:70`, chip revision v1.0), 2026-11-09.
+
+### Identification
+
+The build names the board: `CONFIG_IDF_TARGET_ESP32C5` compiles in the C5 pins and
+`CYDR_MODEL_NM_CYD_C5`. Nothing else in the CYD form factor uses the C5 that we know of,
+and the classic boards' probes can't run here — GPIO32–39 don't exist, GPIO21 / 22 are
+the module's flash and PSRAM pins, and the C5 has no ADC2 issue to work around. The
+panel is still asked for its ID (bit-banged on MISO, GPIO2, with touch CS and card CS
+held HIGH), because the vendor offers an ILI9341 panel option. The ST7789 answered.
+
+The touch controller's IRQ is on IO3 (`TP_IRQ`, 10 k pull-up R3; the vendor README's
+pin table lists none): GPIO3 idles HIGH and goes LOW under a touch (bench). The vendor's two `pins_arduino.h` files disagree on UART and I²C
+pins; the schematic settles them (UART0 to the CH340 on GPIO11/12; CN1 I²C SDA 9 /
+SCL 8; P5 on the LP UART pins GPIO4/5).
+
+### The SPI clock
+
+The display runs at **40 MHz** by default on every board, the C5 included. A board
+can run at 80 MHz only through the SPI-clock override (value 3), which
+TouchCalibrate's **speed test** offers to save when the board passes it, or which a
+sketch can force with `display.setSpiClock(80000000)` before `begin()` (or before
+`lv_setup.begin()`). The default stays at 40 MHz because 80 MHz is past the ST7789's
+62.5 MHz datasheet limit, units vary, and a board that can't take it shows only a
+garbled screen, which a beginner has no way to trace to the clock.
+
+**The test** (`display.stressTest()`): the screen filled with random pixels, then, for
+20 s, two kinds of window alternately, each read back from frame memory with RAMRD at
+2 MHz and compared. **Small windows** (1–W × 1–40, random pixels) go through
+`flushRegion()` itself — window commands and pixel DMA at the clock under test — and
+have their first, last and one middle row checked (every row of every fourth). **Bulk
+windows** are full width and up to the whole screen tall, streamed as back-to-back
+queued DMAs of up to 40 rows, two in flight, the way a frame-streaming sketch sends
+them; their first, last and two random rows are checked. Where Serial is a UART (the
+classic and C5 boards), the test also keeps its TX line busy with high-edge-density
+characters (`UUUU****????pppp~~~~`) during the DMAs, as a working sketch's logging
+would. And it flashes the RGB LED: its three PWM channels share one LEDC timer, so they
+all switch on together, and every 50 ms the duties alternate between equal (every edge
+together: the largest current spikes) and 40 / 128 / 215 of 255 (the off-edges spread
+out). The pins come from detection, so on the 32E boards GPIO4 (the amplifier's
+shutdown) is left alone. A WS2812 (C5, S3) alternates between white and a mixed color.
+The LED is off afterwards. Reads never run at the test clock: fast reads slip. The panel displays that
+memory, so any glitch that could be seen is a mismatch, and so is a misplaced window.
+
+Small windows alone are not enough. An ESP32-32E 2.8" (ILI9341) passed them every time,
+yet streaming frames at 80 MHz it lost bytes about once in 9 MB: once a second at 76
+fps, seen as every ball jumping to another place, or the picture shifting sideways,
+for a frame. With the bulk windows and the UART noise the same board fails 82 of
+1,432 windows; with the LED noise as well, 452 of 1,659. The saved result carries the
+test's version (`CYDR_SPEED_TEST_VERSION`, now 3);
+a result from an earlier version loads as untested, so sketches run the test again.
+
+**Results** (version 3, 2026-11-17):
+
+| Board | 80 MHz |
+|---|---|
+| NM-CYD-C5 ST7789 (`3c:dc:75:99:8d:70`) | 0 of 1,486 |
+| classic ESP32-32E 2.8" ST7789 (`a4:f0:0f:8d:3d:10`) | 0 of 1,374 |
+| classic ESP32-2432S032 ST7789 (`a4:f0:0f:8d:bc:9c`) | 0 of 1,374 |
+| classic ESP32-32E 3.5"/4.0" ST7796 (`28:05:a5:26:41:c0`) | 0 of 1,102 |
+| classic ESP32-32E 3.5"/4.0" ST7796 (`38:18:2b:83:06:34`) | 0 of 1,095 |
+| classic ESP32-2432S032C ST7789 (`14:33:5c:6b:e0:b0`) | 10 of 1,401 wrong |
+| classic ESP32-32E 2.8" ILI9341 (`a4:f0:0f:68:90:c8`) | 452 of 1,659 wrong |
+| ES3C28P ILI9341V (`14:c1:9f:d1:d5:04`) | 646 of 1,803 wrong |
+| classic ESP32-2432S028 ILI9341 (`ec:e3:34:1f:00:3c`) | 1,227 of 2,058 wrong |
+
+The last result is saved in NVS (namespace `cydrforce`, key `speed`) by both
+TouchCalibrate and RasterBouncingBalls, and read back with `cydr_loadSpeedTest()`.
+
+**Odd-length transfers on the classic ESP32.** At 80 MHz the classic ESP32 loses a
+byte of any pixel DMA whose length is 2 mod 4 bytes — an odd pixel count: byte 14
+from the end arrives in frame memory as 00, so the pixel 7th from the end of the
+region's last row has its high byte (red and the top of green) cleared. It is
+deterministic (34 of 300 windows, the same ones every run, all with odd pixel counts)
+and absent at 53.3 MHz and below and on the C5. Re-reading such a row with the write
+clock at 20 MHz returns the same wrong value, so the byte is lost on the way in, not
+on readback. LVGL's partial redraws produce odd-sized rectangles routinely.
+
+So above 60 MHz, `flushRegion()` sends an odd-count region as two transfers: the DMA
+of all but the last pixel (a multiple of 4 bytes) and the last pixel by itself (2
+bytes, from the transaction's own buffer). Both are data, so DC doesn't change, and
+CS rises between them; the ST7789 carries its memory write on across the CS toggle.
+The cost is one small transaction per odd-sized region. A panel that didn't
+continue across CS would fail the speed test and stay at 40 MHz. At the default
+40 MHz nothing is split.
+
+GPIO6 / 7 / 2 are SPI2's IO MUX pins (FSPICLK / FSPID / FSPIQ), as GPIO14 / 13 / 12 are
+HSPI's on the classic boards, so neither goes through the GPIO matrix. At the same
+40 MHz the C5's text terminal still scrolls about a quarter faster than a classic
+240-wide board ([Text terminal](#text-terminal)): a scroll step is many small polled
+command transfers as well as pixel data, and the C5 spends less time on each
+(inferred).
+
+### NM-CYD-C5 power
+
+Both USB-C ports' VBUS pins are on one net (`VBUS`), which reaches the 5 V rail through
+D1 (1N5819WS, Schottky). So the two ports are joined before the diode: with both
+plugged in, two hosts' VBUS are tied together (inferred from the net list). The 5 V rail
+feeds two AMS1117-3.3 LDOs: U7 to `3.3V_ESP`, which has only the module on it, and U1 to
+`3.3V`, which feeds everything else. JP3 and JP1, 0 Ω links drawn across the
+regulators in grey, look like unfitted bypass options. The AMS1117's 5 mA typical
+quiescent current, twice over, is why this board can't sleep cheaply. The WS2812's VDD
+is 5 V, and its data line is level-shifted by Q3 (AO3400A with 10 k pull-ups to 3.3 V
+and 5 V). The backlight is a low-side AO3400A (Q2) with a 10 k gate pull-down (R10) and
+3.9 Ω (R11) in series with the LED.
+
+**TODO (schematic):** Q1 (AO3401A) sits between the 5 V rail and P5 pin 1 with its gate
+on GND; which way it conducts decides whether P5 can power the board.
+
+### NM-CYD-C5 sound
+
+The chain from GPIO26 (`SPEAK_IN`): R4 4.7 k, C11 1 nF to GND, R7 47 k, C12 100 pF to
+GND, C10 330 nF in series, R8 22 k into the SC8002B's −IN; R9 68 k from VO1 back to −IN;
++IN and BYPASS together, decoupled by C8 1 µF; SHUTDOWN tied to GND (always on); VDD
+3.3 V.
+
+- **Low-pass:** 1 / (2π · 4.7 k · 1 nF) = 33.9 kHz and 1 / (2π · 47 k · 100 pF) =
+  33.9 kHz — two poles at the same corner (the stages load each other a little).
+- **High-pass:** −IN is a virtual ground, so C10 sees about 4.7 + 47 + 22 = 73.7 k:
+  1 / (2π · 73.7 k · 330 nF) = 6.5 Hz.
+- **Gain:** the bridge doubles the single-ended gain, 2 × 68 k / 73.7 k = **1.85×**
+  from GPIO26 to the speaker (series resistance at audio frequencies; the 1 nF / 100 pF
+  are negligible below 10 kHz).
+- **Headroom:** a full 0–3.3 V swing at GPIO26 would be 6.1 V p-p across the
+  speaker, but a bridge on 3.3 V delivers somewhat less than 2 × 3.3 V once the output
+  stages' drop is counted. So the top few dB clip, which fits the bench: the top steps
+  of a 3 dB ladder were "a little gritty", the rest clean.
+
+**Why PDM and not PWM.** LEDC PWM at 8 bits runs at 80 MHz / 256 = 312.5 kHz (inferred),
+which the two 34 kHz poles attenuate by only (312.5 / 34)² ≈ 84 (−38 dB), and it is 8-bit
+audio, with the C5 interrupting at the sample rate to update the duty. The I²S
+peripheral's PCM-to-PDM converter (`SOC_I2S_SUPPORTS_PCM2PDM`) takes 16-bit samples by
+DMA, upsamples them to Fpdm = 128 × 48 kHz = 6.144 MHz (the "DAC" clock configuration,
+`up_sample_fs` = rate / 100, `up_sample_fp` = 960), and sigma-delta modulates to one bit.
+The filter's two poles put that carrier about (6144 / 34)² ≈ 33,000 times (−90 dB) down
+before the amplifier sees it, and the quantization noise is shaped up there with it.
+It sounded clearly better than the classic CYDs' 8-bit DAC, especially for treble and
+at low volume (bench, by ear). Its high-pass filter is turned off so a start-up ramp
+from code −32767 to 0 can charge C10 without a thump; MP3 audio has no DC to remove.
+
+### PSRAM and LVGL's heap
+
+The module's 8 MB of quad PSRAM runs at 80 MHz (`CONFIG_SPIRAM_MODE_QUAD`,
+`CONFIG_SPIRAM_SPEED_80M`). The core's malloc keeps blocks under
+`CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL` = 4096 bytes in internal RAM, and nearly all of
+LVGL's allocations are smaller, so LVGL on the system malloc would still use internal
+RAM. The examples' `lv_conf.h` use LVGL's builtin allocator instead, with its 2 MB pool
+from `heap_caps_malloc(…, MALLOC_CAP_SPIRAM)` (`LV_MEM_POOL_ALLOC`), under
+`#if defined(BOARD_HAS_PSRAM)`. The render buffers stay in internal DMA RAM, allocated
+by `lv_setup`. Measured: 288 KB internal free at boot without LVGL, 248 KB with an LVGL
+example running and its pool in PSRAM. The C5's GDMA can read PSRAM
+(`SOC_PSRAM_DMA_CAPABLE`), so render buffers there are possible. **TODO (bench):** the
+cost of rendering into PSRAM.
+
+Every boot logs `E (…) MSPI Timing: Failed to allocate dummy cacheline for PSRAM memory
+barrier!` from the core. PSRAM and everything above worked regardless.
+
+### One core
+
+Nothing in the library outranks Wi-Fi: LVGL runs in the loop task (priority 1), the
+text terminal's task at 10 (`CYDR_TERM_TASK_PRIORITY`), lwIP at 18, Wi-Fi at 23. What
+changes on one core is downward: while the terminal scrolls hard its task runs step
+after step, so tasks below 10 wait. The MP3Player's decoder task (priority 3) outranks
+LVGL, and 44.1 kHz MP3s played with no underrun while the track list scrolled and the
+card shared the bus (2026-11-09). The C5 has no FPU (`soc_caps.h` defines no
+`SOC_CPU_HAS_FPU`): a test that synthesized chords with `sinf()` at 44.1 kHz couldn't
+keep up. libmad is fixed-point, so MP3 decoding is unaffected.
+
+### Text terminal
+
+`TerminalScrollSpeed` on the NM-CYD-C5: **154 lines/s fast, 76 clean at the default
+40 MHz**, and 206 / 100 at 80 MHz — against 122 / 58 on a classic ESP32-32E 2.8" ST7789
+at 40 MHz (all 2026-11-09). The terminal task never used more than 864 bytes of its
+3,072-byte stack (no touch attached).
+
+### Serial: the CH340's receive limit
+
+Uploading at 921600 baud through the CH340 port verified cleanly. Reading the flash
+back failed at 921600 and 460800 ("serial data stream stopped") and failed about a
+third of 1 MB reads at 230400; 115200 never failed. So the Mac's receive side through
+the CH340 driver is the limit, not the board. The stock firmware also wrote flash
+between esptool sessions (each session's reset let it boot): a backup taken in
+separately-reset chunks needs the changed chunks re-read with `--after no-reset` to be
+a consistent snapshot.
+
+### Touch calibration
+
+One unit's TouchCalibrate result: X 284–3844, Y 180–3651 (fit 1.7 px RMS, 2.8 px worst),
+against the defaults of 200–3900 on both axes. Uncalibrated, a touch at the bottom
+edge lands about 20 px high. Raw X runs opposite the panel's columns, raw Y with its
+rows; no swap.
+
+
+## ES3C28P (ESP32-S3)
+
+The vendor's black 2.8" board with the ESP32-32E's silkscreen style, an ESP32-S3R8,
+an IPS ILI9341V and FT6336G capacitive touch; the ES3N28P is the same board without
+touch. Sources: the vendor's package (`2.8inch_ESP32-S3_Display_Schematic.pdf`,
+Altium, 2025-06-11, narrated in
+[schematic-description-ES3C28P.md](schematic-description-ES3C28P.md); the IO
+spreadsheet; the TFT_eSPI setup, `ILI9341V_Init.txt` and the Arduino demos), and two
+units on the bench, 2026-11-09 (`14:c1:9f:d1:d5:04`, stock flash backed up;
+`cc:68:c7:8e:61:60`, interactive checks). The sheet's file name,
+`2.8inch_ESP32-32_Display_Schematic.SchDoc`, and its power section show that it was
+redrawn from the ESP32-32E 2.8"'s.
+
+### Identification
+
+The build selects the S3 path (`CONFIG_IDF_TARGET_ESP32S3`), and board-specific
+identification lives in `chipguy_CYD_board_ESP32S3.cpp` so the next S3 variant is
+one more line there. The classic probes mean nothing on these pins, so the S3
+evidence is:
+
+- **The panel ID**, bit-banged on MISO (GPIO13) exactly as on the classic boards:
+  the ILI9341 index read returns `93 41` under both pulls *(bench)*.
+- **The I²C bus** (SDA 16 / SCL 15): FT6336 at 0x38, ES8311 at 0x18. The bus is
+  recovered (SCL clocked, STOP) before each look. GPIO18 (`CTP_RST`) is driven HIGH
+  first. If the FT6336 still doesn't answer, it gets a 10 ms reset pulse and up to
+  400 ms of polling. That costs 400 ms per boot on an ES3N28P, which has no touch
+  chip; the ES3C28P answers at once *(bench)*.
+- **GPIO45's pull-down** (R32, 10 k against the internal ~45 k pull-up) reads LOW.
+  The library records that as the backlight wiring. It isn't used to name the board.
+
+ILI9341 + ES8311 + FT6336 is the ES3C28P; ILI9341 + ES8311 without the FT6336 is the
+ES3N28P (inferred; not seen). Anything else stays `CYDR_MODEL_UNKNOWN`, with a
+`Serial` line listing what answered.
+
+### The panel
+
+An IPS ILI9341V. The library uses the vendor's init values (power control C0 / C1 =
+13 / 13, VCOM 22 35 / BD, display function 0A A2, interface control F6 01 30, frame
+rate 00 1B, their positive / negative gamma) and **INVON**, which IPS panels need.
+Its gate or source scan is wired the other way from the classic ILI9341 modules', so
+rotation 0 has **MX clear** (the vendor's portrait MADCTL is 0x08, BGR only). With MX
+set, as on the classic modules, the picture is mirrored left to right *(bench)*. The
+other rotations follow from the same table. Readback over GPIO13 passes the begin()
+probe *(bench)*.
+
+The panel sits alone on FSPI's IO_MUX pins (CS 10, MOSI 11, SCK 12, MISO 13), so
+80 MHz needs no GPIO-matrix detour. **TODO (bench):** TouchCalibrate's 80 MHz speed
+test. The odd-length split in `flushRegion()` above 60 MHz exists for the classic
+ESP32's DMA fault and is harmless here.
+
+### Touch
+
+The FT6336G's point registers (0x02 count; 0x03–0x06 X / Y, high nibbles masked) have
+the same layout as the CST820's, so `readRaw()` uses the same reader. `begin()` writes
+G_CTRL (0x86) = 0, so the chip stays in active mode instead of dropping to its
+slower-scanning monitor mode a few seconds after the last touch. It reports 0–239 ×
+0–319 in the panel's native orientation, and with MX clear on the panel, touch needs
+no mirroring *(bench)*. It runs on **`Wire`** (I²C0), not `Wire1` as on the classic
+capacitive boards, because the codec shares the bus and a sketch driving the codec
+will reach for `Wire`. Two controllers on the same pins would fight. The
+readback-versus-I²C lock that the classic capacitive boards need (an XPT2046 whose CS
+is the touch chip's SDA) doesn't apply here and is skipped.
+
+### ES3C28P power
+
+The same design as the ESP32-32E 2.8"'s: D8 (B5819W) from VBUS to `+5`, Q3 (SL2305
+P-MOSFET) from `BAT+` to `+5` with its gate on VBUS and a 100 k pull-down, a TP4054
+with PROG = 3.3 k (I = 1000 V / R ≈ 303 mA), and an ME6217C33 for `VCC3V3`, plus a
+second ME6217C33 for the codec alone. The handover, the regulator dropout and the
+missing undervoltage cutoff are as described for the 32E under
+[Power](#power). The battery divider is 200 k / 200 k on GPIO9 (ADC1_CH8): half the
+cell voltage at 10 µA standing current, with 100 nF on each side, so the ADC's sample
+capacitor is fed from the capacitor rather than the 100 k source. The UART header's pin 1 reaches `+5`
+through Q5 (SL2305, gate grounded through R40): on, and conducting both ways.
+
+With USB connected and (apparently) no cell, GPIO9 read 4.10 V × ½ — the TP4054's
+output with nothing to charge. **TODO (bench):** confirm no cell was fitted.
+
+### ES3C28P sound
+
+ES8311 in slave mode on MCLK = 256 fs from GPIO4, BCLK GPIO5, LRCK GPIO7, DAC data on
+GPIO8 (`I2S_DI`: the codec's DSDIN); the codec's ASDOUT returns on GPIO6 (`I2S_DO`).
+The vendor spreadsheet swaps 6 and 8; the sheet and the vendor's music demo
+(`I2S_DOUT 8`) agree on 8. The codec's differential output drives an SC8002B
+bridge-tied amplifier through 0.39 µF / 20 k, with 20 k feedback: gain 2, 6 dB. The
+amplifier's SHUTDOWN has a 10 k pull-up, so the amplifier is off from reset until
+GPIO1 is driven LOW.
+
+`AudioOutputES8311S3.h` (MP3Player) uses the codec register sequence of the
+reTerminal-D1001 and Seengreat HUB75 copies of `AudioOutputES8311.h`. It keeps the
+I²S channel and MCLK running across tracks, enables `auto_clear`, downmixes to mono,
+and sets the volume in register 0x32 (0xBF = 0 dB at 100 %, 0.4 dB per percent). It
+writes in 256-frame chunks with a 1 s timeout and yields once per chunk, the C5
+output's pattern. Heard clean, with ample range on a small speaker *(bench)*.
+
+### Serial
+
+There is no USB-serial chip. `Serial` is the S3's USB Serial/JTAG, which needs USB
+CDC On Boot enabled; the header refuses a build without it, unless the sketch defines
+`CYDR_SERIAL_ON_UART0`. Upload auto-reset works over that port *(bench)*. Reading the
+flash back with esptool failed at 921600 baud ("Serial data stream stopped") on this
+port too. A full 16 MB read at 115200 was used for the backup.
+
 ---
 
 ## What a bench session should measure
@@ -1163,7 +1726,7 @@ at 240 wide, 97 / 49 at 320 wide.
 In roughly the order of how much a sketch author would gain from the number:
 
 1. **Current draw, both columns** of the table in
-   [README-power.md](README-power.md#power-consumption) — USB power meter for the USB
+   [README-power-ESP32.md](README-power-ESP32.md#power-consumption) — USB power meter for the USB
    column, meter in series with the cell for the battery column. The deep-sleep row with
    the panel in Sleep In and the card removed is the one that settles whether the
    ~100–200 µA floor is real, and whether the CH340 dominates it.
@@ -1180,3 +1743,16 @@ In roughly the order of how much a sketch author would gain from the number:
    the DAC active.
 9. **Read the "103" capacitor** in the amplifier input network; a "102" would move the
    4 kHz corner to 41 kHz.
+
+NM-CYD-C5:
+
+1. **Current draw** for the table in
+   [README-power-ESP32-C5.md](README-power-ESP32-C5.md#power-consumption), especially
+   deep sleep with the backlight off and the panel in Sleep In.
+2. **Touch wake from deep sleep** on GPIO3 (an LP GPIO, wake on LOW).
+3. **The touch-cache comparison on a classic shared-touch board** at 40 MHz, where
+   the DMA waits it removes are twice as long.
+4. **Card clock**: 40 MHz on the shared bus, and an LVGL animation's frame rate while
+   a file is read.
+5. **Q1 and P5**: whether 5 V fed into P5 powers the board.
+6. **Wi-Fi in the speaker**: audible or not, with the PDM output idling.

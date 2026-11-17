@@ -1,4 +1,9 @@
-# Which board am I on? — what `display.begin()` detects
+# Which board am I on? — what `display.begin()` detects (ESP32)
+
+> The classic **ESP32** boards, which are told apart at run time. On the
+> **NM-CYD-C5** the build names the board: a sketch compiled for the ESP32-C5 gets
+> `CYDR_MODEL_NM_CYD_C5`, and nothing here applies; see
+> [README-board-ESP32-C5.md](README-board-ESP32-C5.md#which-board-this-is).
 
 One sketch can run on every board this library supports. `display.begin()` works out
 three things on its own, before it drives any pin that differs between boards, and
@@ -46,7 +51,7 @@ taken for a 32E 3.5" / 4.0".
 
 The **`BoardDetect`** example shows all of this on the screen, plus what each model has
 for battery support, a light sensor and an amplifier switch — that table is in
-[README-board.md](README-board.md#which-boards-these-are).
+[README-board-ESP32.md](README-board-ESP32.md#which-boards-these-are).
 
 The 3.2" and the ESP32-024 need different settings — the ST7789 ESP32-024's screen shows inverse
 video with the 3.2"'s, and its touch axes are swapped — so `begin()` waits for the
@@ -71,7 +76,7 @@ ESP32's internal pull-up on both candidate pins and sees which one stays LOW:
   display's SPI bus (13 / 14 / 12, CS 33). 32E 3.2", 3.5", 4.0" and ESP32-024.
 
 Nothing is driven, so this is safe on every board. Pin details in
-[README-board.md](README-board.md#which-pins-are-already-taken).
+[README-board-ESP32.md](README-board-ESP32.md#which-pins-are-already-taken).
 
 ## Panel: asked by its ID
 
@@ -89,7 +94,7 @@ wiring couldn't be told — is a board no one has seen yet: the library sets tha
 ST7789 on own-touch wiring is the known 2.8" panel and is named as before. If no ID is
 recognised, the library prints the bytes on Serial and guesses from the wiring
 (ST7796 on shared touch, ILI9341 on own touch); `display.setPanel()` before
-`begin()` skips detection. [Details](README-board.md#screen-variants).
+`begin()` skips detection. [Details](README-board-ESP32.md#screen-variants).
 
 ## Red LED: GPIO4's voltage
 

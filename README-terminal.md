@@ -128,7 +128,7 @@ The terminal only remembers the line the cursor is on. When `setCursor()` moves 
 line printed earlier, the terminal reads the pixels under the cursor back from the
 screen, so it can put them back when the cursor blinks off. Every board can do this
 except the **ESP32-3248S035C**, whose screen can't be read unless its R24 pads are
-bridged ([details](README-board.md)); `readbackAvailable()`
+bridged ([details](README-board-ESP32.md)); `readbackAvailable()`
 says whether yours can (and `BoardDetect` shows it). On the 3248S035C, over old text, the
 cursor blinks between the text color and the background color. When it moves on, it
 leaves the background color behind in the space it covered. That rubs out part of

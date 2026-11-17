@@ -25,14 +25,27 @@
    STDLIB WRAPPER SETTINGS
  *=========================*/
 
-#define LV_USE_STDLIB_MALLOC    LV_STDLIB_CLIB  /* Use system malloc - enables PSRAM for large allocations */
+/* Where LVGL's heap lives -- every object, style, layer and cache it
+ * allocates.  (The two render buffers are separate: lv_setup allocates them
+ * in internal, DMA-capable RAM on every board.)
+ *  - PSRAM boards (the NM-CYD-C5; BOARD_HAS_PSRAM comes from Tools > PSRAM >
+ *    Enabled): a pool of LV_MEM_SIZE in PSRAM, so LVGL takes none of the
+ *    internal SRAM that WiFi and the render buffers need.  The system malloc
+ *    would not do this: it keeps blocks under 4 KB -- nearly all of LVGL's --
+ *    in internal RAM.
+ *  - The classic CYDs (no PSRAM): the system malloc. */
+#if defined(BOARD_HAS_PSRAM)
+#define LV_USE_STDLIB_MALLOC    LV_STDLIB_BUILTIN
+#else
+#define LV_USE_STDLIB_MALLOC    LV_STDLIB_CLIB
+#endif
 #define LV_USE_STDLIB_STRING    LV_STDLIB_BUILTIN
 #define LV_USE_STDLIB_SPRINTF   LV_STDLIB_BUILTIN
 
 
 #if LV_USE_STDLIB_MALLOC == LV_STDLIB_BUILTIN
     /*Size of the memory available for `lv_malloc()` in bytes (>= 2kB)*/
-    #define LV_MEM_SIZE (128 * 1024U)          /*[bytes]*/
+    #define LV_MEM_SIZE (2 * 1024 * 1024U)     /*[bytes] 2 of the NM-CYD-C5's 8 MB*/
 
     /*Size of the memory expand for `lv_malloc()` in bytes*/
     #define LV_MEM_POOL_EXPAND_SIZE 0
@@ -40,10 +53,8 @@
     /*Set an address for the memory pool instead of allocating it as a normal array. Can be in external SRAM too.*/
     #define LV_MEM_ADR 0     /*0: unused*/
     /*Instead of an address give a memory allocator that will be called to get a memory pool for LVGL. E.g. my_malloc*/
-    #if LV_MEM_ADR == 0
-        #undef LV_MEM_POOL_INCLUDE
-        #undef LV_MEM_POOL_ALLOC
-    #endif
+    #define LV_MEM_POOL_INCLUDE <esp_heap_caps.h>
+    #define LV_MEM_POOL_ALLOC(size) heap_caps_malloc((size), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
 #endif  /*LV_USE_STDLIB_MALLOC == LV_STDLIB_BUILTIN*/
 
 /*====================
@@ -97,8 +108,13 @@
     #define LV_DRAW_SW_COMPLEX          1
 
     #if LV_DRAW_SW_COMPLEX == 1
+        #if defined(BOARD_HAS_PSRAM)
+        #define LV_DRAW_SW_SHADOW_CACHE_SIZE 32
+        #define LV_DRAW_SW_CIRCLE_CACHE_SIZE 16
+        #else
         #define LV_DRAW_SW_SHADOW_CACHE_SIZE 0
         #define LV_DRAW_SW_CIRCLE_CACHE_SIZE 4
+        #endif
     #endif
 
     #define  LV_USE_DRAW_SW_ASM     LV_DRAW_SW_ASM_NONE
@@ -199,8 +215,15 @@
     #define LV_GLOBAL_CUSTOM_INCLUDE <stdint.h>
 #endif
 
+#if defined(BOARD_HAS_PSRAM)
+/* With LVGL's heap in PSRAM, decoded images can be cached instead of decoded
+ * again on every draw. */
+#define LV_CACHE_DEF_SIZE       (512 * 1024)
+#define LV_IMAGE_HEADER_CACHE_DEF_CNT 32
+#else
 #define LV_CACHE_DEF_SIZE       0
 #define LV_IMAGE_HEADER_CACHE_DEF_CNT 0
+#endif
 #define LV_GRADIENT_MAX_STOPS   2
 #define LV_COLOR_MIX_ROUND_OFS  0
 #define LV_OBJ_STYLE_CACHE      0

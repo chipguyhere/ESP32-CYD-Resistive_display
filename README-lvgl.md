@@ -15,6 +15,12 @@ The examples use **LVGL 9**. Install it from the Arduino **Library Manager** (se
 "lvgl"). Each example folder has its own `lv_conf.h` file — that's LVGL's settings file,
 and it needs to stay next to the `.ino`.
 
+On the **NM-CYD-C5** (which has extra memory, PSRAM) those `lv_conf.h` files put
+LVGL's working memory there: a 2 MB block, plus bigger image and drawing caches. That
+leaves the chip's own, smaller memory for Wi-Fi and the screen's drawing buffers. On
+the classic boards, which have no PSRAM, nothing changes. Copy an example's
+`lv_conf.h` and you get this automatically. [Why](README-engineering.md#psram-and-lvgls-heap).
+
 This library was written against LVGL 9.3 (the version SquareLine Studio supports) and
 very likely works with later versions.
 
@@ -91,6 +97,27 @@ themselves out from the screen size at run time, so the same `ui.cpp` works in a
 orientation and even on a different-sized board. Good examples of how an LVGL app is
 put together.
 
+### RasterBouncingBalls — what can your screen do?
+
+A demo that teaches as it goes. Before the balls start, it tests your board one step at
+a time — press Next or BOOT to move on:
+
+- **Speed.** Can your screen take double speed (80 MHz)? It runs the same test as
+  `TouchCalibrate` if your board hasn't had it, and remembers the answer.
+- **Sync.** Can your screen say which line it's drawing? If so, the balls can be timed
+  to it.
+- **Refresh.** How many times a second your screen refreshes itself.
+- **Tearing.** Whether the balls can run with no tear — no line where an old frame
+  meets a new one. If a slower refresh would fix it, it says how slow, lets you try it
+  on test patterns, and remembers your choice. Slower refreshes can make fine patterns
+  flicker, so it's your call. Other sketches keep the normal refresh unless they ask
+  for yours with `display.applyRefreshChoice()`.
+
+The balls skip LVGL: each strip of them is drawn just before it's sent. Only the
+controls at the bottom are LVGL, and they wait their turn behind the balls. It uses
+about 23 KB of extra memory; `config.h` in the example has smaller and larger settings.
+How it works: [README-engineering.md, "Beam chasing"](README-engineering.md#beam-chasing).
+
 ### LvglRotation — turning the screen while the app runs
 
 Tap **Rotate** (or press BOOT) and the screen turns a quarter-turn, touch and all. It
@@ -102,8 +129,10 @@ that rearranges itself to fit. See [Rotation](#rotation).
 The reference for **using the speaker**: it plays `*.mp3` files from the SD card
 through the board's amplifier, with a track list, transport buttons and a click-wheel
 view. It needs the **ESP8266Audio** library (Library Manager) for MP3 decoding.
-The audio code is written up in [README-sound.md](README-sound.md); if your sketch
-needs sound, copy `AudioOutputCydDac.h` from this example.
+It builds for both chips. A few of its files belong to one chip only, and each says so
+at the top. If your sketch needs sound, copy the output class for your chip:
+`AudioOutputCydDac.h` on the classic boards ([README-sound-ESP32.md](README-sound-ESP32.md)),
+`AudioOutputC5Pdm.h` on the NM-CYD-C5 ([README-sound-ESP32-C5.md](README-sound-ESP32-C5.md)).
 
 ---
 

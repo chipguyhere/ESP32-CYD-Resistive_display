@@ -1,38 +1,27 @@
 /*
- * player.cpp - MP3 playlist player: SD scan + decoder task.  See player.h.
+ * player.cpp - MP3 playlist player: card scan + decoder task.  See player.h.
+ *
+ * Shared by every build.  What differs between the ESP32 and the ESP32-C5 --
+ * how the card is mounted, which audio output -- is behind platform.h.
  */
 
 #include "player.h"
 
 #include <algorithm>
 
-#include <SPI.h>
-#include <SD.h>
-#include <AudioFileSourceSD.h>
+#include <AudioFileSourceFS.h>
 #include <AudioGeneratorMP3.h>
-#include "AudioOutputCydDac.h"
+#include "platform.h"
 #include "id3scan.h"
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <freertos/queue.h>
 
-// microSD slot: CS on GPIO5, data on the default VSPI pins (18/19/23).
-// Same wiring on every board this library supports (2432S028, 32E 2.8" /
-// 3.2" / 3.5" / 4.0", ESP32-024), so this mount needs no board check.
-// SD.begin() defaults to a 4 MHz clock; the on-board slot is a short trace
-// and runs fine faster, and slow reads are what cause DAC underruns.
-static constexpr int kSdCs = 5;
-static constexpr uint32_t kSdHz = 20000000;
-
 // libmad wants a fair amount of stack, and SD/FAT reads happen on top of it.
 static constexpr uint32_t kTaskStack = 16 * 1024;
-// Core 0 keeps LVGL's core (1) free — right for a sketch with no WiFi.  A
-// sketch that uses WiFi should move this to core 1 instead: WiFi and LwIP
-// own core 0 at priorities 23 and 18, and this task at priority 3 would sit
-// under them.  On core 1 it only outranks loopTask (1), which is the point.
-// See README-sound.md in chipguy_ESP32-CYD-Resistive_display, rule 3.
-static constexpr int kTaskCore = 0;
+// The core: platform_audio_core() (see the platform files).  Priority 3
+// outranks loopTask (1), where LVGL runs.
 static constexpr int kTaskPriority = 3;
 
 enum Cmd : uint8_t { CMD_PLAY, CMD_TOGGLE_PAUSE, CMD_STOP, CMD_NEXT, CMD_PREV };
@@ -44,9 +33,9 @@ static portMUX_TYPE statusMux = portMUX_INITIALIZER_UNLOCKED;
 static PlayerStatus status = { PLAYER_STOPPED, -1, 0, 0, 0, "", "" };
 
 // Decoder objects live on the audio task only.
-static AudioOutputCydDac *out;
+static CydAudioOut *out;
 static AudioGeneratorMP3 *mp3;
-static AudioFileSourceSD *file;
+static AudioFileSourceFS *file;
 
 // ---------------------------------------------------------------------------
 // Playlist
@@ -61,7 +50,7 @@ static bool isMp3Name(const char *name) {
 
 static void scanRoot() {
     tracks.clear();
-    File root = SD.open("/");
+    File root = platform_card().open("/");
     if (!root) return;
     for (File f = root.openNextFile(); f; f = root.openNextFile()) {
         if (!f.isDirectory() && isMp3Name(f.name()))
@@ -75,7 +64,7 @@ static void scanRoot() {
     // Tags: a few sector reads per file, see id3scan.h.
     for (auto &t : tracks) {
         String path = "/" + t.file;
-        id3_read(path.c_str(), t.title, t.artist);
+        id3_read(platform_card(), path.c_str(), t.title, t.artist);
     }
 }
 
@@ -97,7 +86,7 @@ static void setStatus(PlayerState st, int track) {
 static void updateProgress() {
     uint32_t pos = file ? file->getPos() : 0;
     uint32_t size = file ? file->getSize() : 0;
-    int rate = (mp3 && mp3->isRunning() && out) ? out->dacRate() : 0;
+    int rate = (mp3 && mp3->isRunning() && out) ? out->outputRate() : 0;
     portENTER_CRITICAL(&statusMux);
     status.pos = pos;
     status.size = size;
@@ -157,7 +146,7 @@ static bool startTrack(int idx) {
     }
 
     String path = "/" + tracks[idx].file;
-    file = new AudioFileSourceSD(path.c_str());
+    file = new AudioFileSourceFS(platform_card(), path.c_str());
     if (!file->isOpen()) {
         Serial.printf("player: can't open %s\n", path.c_str());
         delete file; file = nullptr;
@@ -222,7 +211,7 @@ static bool requestedDither = true;
 static uint8_t requestedVolume = 70;
 
 static void audioTask(void *) {
-    out = new AudioOutputCydDac();
+    out = platform_new_output();
     out->setVolume(requestedVolume);
     out->setDither(requestedDither);
     mp3 = new AudioGeneratorMP3();
@@ -259,7 +248,7 @@ static void audioTask(void *) {
             updateProgress();
             if (out->underruns() != lastUnderruns) {
                 lastUnderruns = out->underruns();
-                Serial.printf("player: DAC underruns: %lu\n", (unsigned long)lastUnderruns);
+                Serial.printf("player: output underruns: %lu\n", (unsigned long)lastUnderruns);
             }
         }
     }
@@ -269,29 +258,10 @@ static void audioTask(void *) {
 // Public API
 
 bool player_begin() {
-    // Amplifier off first (GPIO4, active LOW; the board's 10 k pull-up has it
-    // off already, this just makes it explicit).  The output class turns it
-    // on once the DAC is running and parked at mid-scale.  Not on the
-    // ESP32-2432S028 or ESP32-024, where GPIO4 is the red LED.
-    if (AudioOutputCydDac::hasAmpPin()) {
-        pinMode(AudioOutputCydDac::kAmpEnablePin, OUTPUT);
-        digitalWrite(AudioOutputCydDac::kAmpEnablePin, HIGH);
-    }
-
-    // Park the speaker input at 0 V now.  GPIO26 boots as a floating input,
-    // and the DAC's first enable would otherwise be a float-to-0 V step
-    // through the amplifier; from a driven low it's 0 V to 0 V, then the
-    // output class ramps up smoothly.
-    pinMode(26, OUTPUT);
-    digitalWrite(26, LOW);
-
-    if (!SD.begin(kSdCs, SPI, kSdHz)) {
-        Serial.println("player: SD mount failed at 20 MHz, retrying at 4 MHz");
-        SD.end();
-        if (!SD.begin(kSdCs, SPI, 4000000)) {
-            Serial.println("player: SD mount failed");
-            return false;
-        }
+    platform_audio_idle();
+    if (!platform_card_mount()) {
+        Serial.println("player: card mount failed");
+        return false;
     }
     scanRoot();
     Serial.printf("player: %u MP3 file(s) in root\n", (unsigned)tracks.size());
@@ -299,7 +269,7 @@ bool player_begin() {
 
     cmdQueue = xQueueCreate(8, sizeof(CmdMsg));
     xTaskCreatePinnedToCore(audioTask, "audio", kTaskStack, nullptr,
-                            kTaskPriority, nullptr, kTaskCore);
+                            kTaskPriority, nullptr, platform_audio_core());
     return true;
 }
 
@@ -330,6 +300,14 @@ void player_set_dither(bool on) {
     Serial.printf("player: dither %s\n", on ? "ON (TPDF + 1st-order shaping)" : "OFF (round)");
 }
 bool player_dither() { return requestedDither; }
+// Built for the classic ESP32 (an 8-bit DAC, worth dithering) or not.
+bool player_has_dither() {
+#if defined(CONFIG_IDF_TARGET_ESP32)
+    return true;
+#else
+    return false;
+#endif
+}
 
 PlayerStatus player_status() {
     PlayerStatus s;

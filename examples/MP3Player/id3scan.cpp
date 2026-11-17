@@ -3,7 +3,7 @@
  */
 
 #include "id3scan.h"
-#include <SD.h>
+#include <FS.h>
 
 // ---------------------------------------------------------------------------
 // Text decoding.  ID3v2 text frames start with an encoding byte:
@@ -164,9 +164,9 @@ static bool readV1(File &f, String &title, String &artist) {
     return found;
 }
 
-bool id3_read(const char *path, String &title, String &artist) {
+bool id3_read(fs::FS &fs, const char *path, String &title, String &artist) {
     title = artist = String();
-    File f = SD.open(path);
+    File f = fs.open(path);
     if (!f) return false;
     bool found = readV2(f, title, artist);
     if (!title.length() || !artist.length())

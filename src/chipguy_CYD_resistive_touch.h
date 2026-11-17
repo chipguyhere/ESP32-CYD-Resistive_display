@@ -17,13 +17,22 @@
  *     and a slow clock.
  *       XPT2046_CS  33   XPT2046_IRQ  36 (active LOW while touched)
  *     Here begin() must come AFTER the display's begin(), which sets up that
- *     bus, and a read waits for any in-flight display DMA first.
+ *     bus.  Reads come from samples taken between display writes; see
+ *     "Sampling between display writes" below.
+ *   - NM-CYD-C5 (ESP32-C5): the display's bus as well (SCLK 6, MOSI 7, MISO 2),
+ *       XPT2046_CS  1    XPT2046_IRQ  3 (active LOW while touched)
  *
  * Capacitive boards have a GT911 (ESP32-2432S032C) or CST820 (ESP32-2432S024C,
  * JC2432W328) instead, on I2C (Wire1: SDA 33, SCL 32; RST 25 is left alone and
  * INT isn't used -- both chips are polled).  begin() picks whichever chip the
  * display found (display.touchChip()), and read() returns its points through
- * the same rotation mapping.  They need no calibration: setCalibration(),
+ * the same rotation mapping.
+ *
+ * The ESP32-S3 ES3C28P has an FT6336G at 0x38 on SDA 16 / SCL 15, read on
+ * Wire (I2C0, shared with its ES8311 codec); the ES3N28P has no touch, and
+ * read() never reports a press (chip() == CYDR_TOUCH_NONE).
+ *
+ * Capacitive chips need no calibration: setCalibration(),
  * the filters and pressure() don't apply, and loadCalibration() returns false.
  *
  * Resistive panels vary unit-to-unit, so raw ADC readings are mapped to screen
@@ -40,7 +49,40 @@
 
 #include <Arduino.h>
 #include <driver/spi_master.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 #include "chipguy_CYD_resistive_display.h"
+
+// ── Sampling between display writes ────────────────────────────────────────
+// Where the XPT2046 shares the display's SPI bus (every shared-touch board,
+// and the NM-CYD-C5), begin(display) installs a hook the display runs while
+// its bus is idle -- in flushRegion() and between the text terminal's steps.
+// While the screen is pressed, the hook samples at most every
+// CYDR_TOUCH_SAMPLE_MS into a cache; read() / readRaw() use a cached sample up
+// to CYDR_TOUCH_CACHE_MS old and sample for themselves only when it is older
+// (nothing being drawn, so the bus is free).  So a read never waits on a
+// pixel DMA while the screen is busy.  PENIRQ is checked directly on every
+// read, so press and release are immediate; coordinates can be up to one
+// frame old.  setSampleCache(false) restores sampling on every read.
+#ifndef CYDR_TOUCH_SAMPLE_MS
+#define CYDR_TOUCH_SAMPLE_MS 8
+#endif
+#ifndef CYDR_TOUCH_CACHE_MS
+#define CYDR_TOUCH_CACHE_MS 50     // > LVGL's 33 ms refresh period
+#endif
+
+// NM-CYD-C5 touch axes against the panel's (portrait, rotation 0): raw X
+// runs opposite the panel's columns, raw Y with its rows, no swap (bench,
+// 2026-11-09: corner taps, two runs alike).
+#ifndef CYDR_C5_TOUCH_MX
+#define CYDR_C5_TOUCH_MX true
+#endif
+#ifndef CYDR_C5_TOUCH_MY
+#define CYDR_C5_TOUCH_MY false
+#endif
+#ifndef CYDR_C5_TOUCH_SWAP
+#define CYDR_C5_TOUCH_SWAP false
+#endif
 
 class chipguy_CYD_resistive_touch {
 public:
@@ -145,6 +187,23 @@ public:
     // numbers.
     bool readRaw(uint16_t &rawX, uint16_t &rawY);
 
+    // Sampling between display writes (shared bus; see the top of this file).
+    // On by default; off makes every read sample the bus itself, as before.
+    void setSampleCache(bool on) { _cacheOn = on; }
+    bool sampleCache() const { return _cacheOn; }
+    // Cache only: read() never samples the shared bus itself, however old
+    // the cache is; it reports whatever the display side's last sample was
+    // (released if there is none since the press began).  For a sketch whose
+    // own task owns the bus and calls display.runTouchSampler() whenever it
+    // has a gap (RasterBouncingBalls), so a touch read can never delay a
+    // transfer.  No effect on own-pins or capacitive boards.  Off by default.
+    void setCacheOnly(bool on) { _cacheOnly = on; }
+    bool cacheOnly() const { return _cacheOnly; }
+    // Diagnostics: bus samples taken so far (by either side), and how many
+    // reads were answered by a sample they hadn't seen yet.
+    uint32_t busSamples() const;
+    uint32_t freshReads() const { return _hits; }
+
 private:
     chipguy_CYD_resistive_display *_display = nullptr;
     spi_device_handle_t _spi = nullptr;   // shared-bus device (shared-touch boards only)
@@ -178,6 +237,23 @@ private:
     uint16_t _transferByteAndRead12(uint8_t cmd);
     uint16_t _readChannelMedian(uint8_t cmd);
     bool     _readRawSample(uint16_t &rawX, uint16_t &rawY);
+    bool     _sampleBus(uint16_t &rawX, uint16_t &rawY, uint16_t &pressure);
+    bool     _sampleToCache();
+    void     _installSampler();
+    static void _samplerHook(void *arg);
+
+    struct _cache_t {
+        uint16_t x = 0, y = 0, p = 0;
+        bool     down = false, valid = false;
+        uint32_t ms = 0;
+    };
+    _cache_t _cache;
+    portMUX_TYPE _cacheMux = portMUX_INITIALIZER_UNLOCKED;
+    StaticSemaphore_t _sampleMutexBuf;
+    SemaphoreHandle_t _sampleMutex = nullptr;   // one bus sample at a time
+    bool     _cacheOn = true;
+    bool     _cacheOnly = false;
+    uint32_t _samples = 0, _hits = 0, _lastSeenMs = 0xFFFFFFFF;
     bool     _gt911Read(uint16_t &rawX, uint16_t &rawY);
     bool     _gtReg(uint16_t reg, uint8_t *buf, int n);       // takes cydr_touchI2cLock()
     bool     _gtRegLocked(uint16_t reg, uint8_t *buf, int n);

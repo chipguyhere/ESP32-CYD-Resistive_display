@@ -14,8 +14,9 @@
  * The panel is driven in LVGL PARTIAL render mode: LVGL renders into a small
  * in-RAM buffer and hands us regions to blit over SPI.  Touch comes from the
  * XPT2046 resistive controller: on its own pins on the 2432S028 and 32E 2.8",
- * on the display's SPI bus on the 3.2" / 3.5" / 4.0" / ESP32-024 (the touch driver
- * then waits for any in-flight display DMA before each read).
+ * on the display's SPI bus on the 3.2" / 3.5" / 4.0" / ESP32-024 and the
+ * NM-CYD-C5 (sampled between display writes, so a read doesn't wait on the
+ * display's DMA).
  */
 
 #pragma once

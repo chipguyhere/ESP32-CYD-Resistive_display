@@ -21,6 +21,8 @@
 #define CYDR_TOUCH_NVS_NS_S032       "e2432s032touch" // shared-touch, 240x320 (ESP32-2432S032)
 #define CYDR_TOUCH_NVS_NS_S032C      "e2432s032ctch"  // GT911; holds only filters (ESP32-2432S032C)
 #define CYDR_TOUCH_NVS_NS_CAP        "ecaptouch"      // other capacitive boards; filters only
+#define CYDR_TOUCH_NVS_NS_C5         "nmcydc5touch"   // NM-CYD-C5 (ESP32-C5)
+#define CYDR_TOUCH_NVS_NS_ES3C28P    "es3c28ptouch"   // FT6336; holds only filters (ES3C28P)
 #define CYDR_TOUCH_NVS_XMIN "xmin"
 #define CYDR_TOUCH_NVS_XMAX "xmax"
 #define CYDR_TOUCH_NVS_YMIN "ymin"
@@ -29,6 +31,20 @@
 #define CYDR_TOUCH_NVS_JUMP "jump"   // max jump (px) filter
 
 // ── Board pin assignments ──────────────────────────────────────────────────
+#if CYDR_CHIP_C5
+// NM-CYD-C5: on the display's bus only.
+#define CYDR_TOUCH_CS     1
+#define CYDR_TOUCH_IRQ    3   // PENIRQ, 10k pull-up on the board; LOW while touched
+#elif CYDR_CHIP_S3
+// ES3C28P: no XPT2046.  The FT6336 is on Wire (I2C0), SDA 16 / SCL 15,
+// which the ES8311 codec shares -- a sketch's own Wire.begin(16, 15) for the
+// codec then finds the bus already started.  INT (17) isn't used: polled.
+#define CYDR_TOUCH_IRQ   -1
+#define CYDR_TOUCH_CS    -1   // unused: the XPT2046 paths never run here
+#define CYDR_CAP_SDA     16
+#define CYDR_CAP_SCL     15
+#define CYDR_CAP_WIRE    Wire
+#else
 // Own-touch boards: the XPT2046 has its own pins, bit-banged.
 #define CYDR_TOUCH_CLK   25
 #define CYDR_TOUCH_MOSI  32
@@ -36,6 +52,16 @@
 // Both wirings:
 #define CYDR_TOUCH_CS    33
 #define CYDR_TOUCH_IRQ   36   // active LOW while the panel is being touched
+// Capacitive chips (GT911, CST820): Wire1 on SDA 33 / SCL 32.
+#define CYDR_CAP_SDA     33
+#define CYDR_CAP_SCL     32
+#define CYDR_CAP_WIRE    Wire1
+#endif
+#ifndef CYDR_CAP_WIRE                 // the C5: no capacitive board, but keep it compiling
+#define CYDR_CAP_SDA     -1
+#define CYDR_CAP_SCL     -1
+#define CYDR_CAP_WIRE    Wire1
+#endif
 
 // Shared-touch boards: the XPT2046 is a second device on the display's bus.  Its max
 // SPI clock is ~2.5 MHz; stay comfortably under it.  The SPI master driver
@@ -63,6 +89,10 @@
 // mean), which discards the occasional spike instead of blending it in.  Odd
 // so the median is a single middle element.
 static const int CYDR_TOUCH_SAMPLES = 7;
+
+// The screen-pressed test: PENIRQ, LOW while touched.  A GPIO read; costs no
+// bus time.
+static inline bool _cydr_irqDown() { return CYDR_TOUCH_IRQ >= 0 && digitalRead(CYDR_TOUCH_IRQ) == LOW; }
 
 chipguy_CYD_resistive_touch::chipguy_CYD_resistive_touch()
     : _nvsNs(CYDR_TOUCH_NVS_NS_OWN),
@@ -117,7 +147,28 @@ bool chipguy_CYD_resistive_touch::_setup(cydr_board_t board, cydr_panel_t panel)
 
     // IRQ is GPIO36, an input-only pin with NO internal pull resistor; the
     // XPT2046's PENIRQ drives it high when idle, low when touched.
+#if CYDR_CHIP_S3
+    if (cydr_activeTouchChip() == CYDR_TOUCH_NONE ||
+        cydr_activeTouchChip() == CYDR_TOUCH_XPT2046) {
+        // No touch fitted (ES3N28P, or an S3 board whose chip didn't answer):
+        // nothing to set up; read() reports no press.
+        _chip = CYDR_TOUCH_NONE;
+        _nativeW = panel == CYDR_PANEL_ST7796 ? 320 : 240;
+        _nativeH = panel == CYDR_PANEL_ST7796 ? 480 : 320;
+        _mirrorX = false; _mirrorY = false;
+        _nvsNs = CYDR_TOUCH_NVS_NS_ES3C28P;
+        if (cydr_activeModel() != CYDR_MODEL_ES3N28P)
+            Serial.printf("cydr touch: no touch chip answered on SDA %d / SCL %d\n",
+                          CYDR_CAP_SDA, CYDR_CAP_SCL);
+        return true;
+    }
+#else
     pinMode(CYDR_TOUCH_IRQ, INPUT);
+#endif
+#if CYDR_CHIP_C5
+    pinMode(CYDR_TOUCH_CS, OUTPUT);       // deselected until the SPI driver takes it
+    digitalWrite(CYDR_TOUCH_CS, HIGH);
+#endif
     _swapXY = false;
 
     if (cydr_activeTouchChip() != CYDR_TOUCH_XPT2046) {
@@ -129,7 +180,8 @@ bool chipguy_CYD_resistive_touch::_setup(cydr_board_t board, cydr_panel_t panel)
         _nativeW = panel == CYDR_PANEL_ST7796 ? 320 : 240;
         _nativeH = panel == CYDR_PANEL_ST7796 ? 480 : 320;
         _mirrorX = false; _mirrorY = false;
-        _nvsNs = cydr_activeModel() == CYDR_MODEL_2432S032C ? CYDR_TOUCH_NVS_NS_S032C
+        _nvsNs = cydr_activeModel() == CYDR_MODEL_2432S032C ? CYDR_TOUCH_NVS_NS_S032C :
+                 cydr_activeModel() == CYDR_MODEL_ES3C28P   ? CYDR_TOUCH_NVS_NS_ES3C28P
                                                             : CYDR_TOUCH_NVS_NS_CAP;
         if (_chip != CYDR_TOUCH_XPT2046) return true;     // begun before
         cydr_touch_chip_t want = cydr_activeTouchChip();
@@ -140,28 +192,49 @@ bool chipguy_CYD_resistive_touch::_setup(cydr_board_t board, cydr_panel_t panel)
             if (cydr_probeI2cTouch(&addr) != want) addr = 0;
         }
         if (!addr) {
-            Serial.printf("cydr touch: %s not answering on SDA 33 / SCL 32\n",
-                          want == CYDR_TOUCH_GT911 ? "GT911" : "CST820");
+            Serial.printf("cydr touch: %s not answering on SDA %d / SCL %d\n",
+                          want == CYDR_TOUCH_GT911 ? "GT911" :
+                          want == CYDR_TOUCH_FT6336 ? "FT6336" : "CST820",
+                          CYDR_CAP_SDA, CYDR_CAP_SCL);
             return false;
         }
         _chip = want;
         _capAddr = addr;
-        Wire1.begin(33, 32, 400000);
+#if CYDR_CHIP_C5
+        return false;                     // unreachable: no capacitive C5 board
+#endif
+        CYDR_CAP_WIRE.begin(CYDR_CAP_SDA, CYDR_CAP_SCL, 400000);
         if (_chip == CYDR_TOUCH_CST820) {
             // Keep it awake: the CST816 family sleeps after a few seconds
             // without a touch and then stops answering on I2C until touched.
             // 0xFE (DisAutoSleep) = 1.
             cydr_touchI2cLock();
-            Wire1.beginTransmission(_capAddr);
-            Wire1.write(0xFE); Wire1.write(0x01);
-            Wire1.endTransmission();
+            CYDR_CAP_WIRE.beginTransmission(_capAddr);
+            CYDR_CAP_WIRE.write(0xFE); CYDR_CAP_WIRE.write(0x01);
+            CYDR_CAP_WIRE.endTransmission();
+            cydr_touchI2cUnlock();
+        } else if (_chip == CYDR_TOUCH_FT6336) {
+            // Keep it in active mode: by default it drops to its slower-
+            // scanning monitor mode a few seconds after the last touch.
+            // 0x86 (G_CTRL) = 0.
+            cydr_touchI2cLock();
+            CYDR_CAP_WIRE.beginTransmission(_capAddr);
+            CYDR_CAP_WIRE.write(0x86); CYDR_CAP_WIRE.write(0x00);
+            CYDR_CAP_WIRE.endTransmission();
             cydr_touchI2cUnlock();
         }
         return true;
     }
 
     if (_board == CYDR_BOARD_SHARED_TOUCH) {
-        if (panel == CYDR_PANEL_ST7796 && cydr_activeModel() == CYDR_MODEL_035) {
+        if (CYDR_CHIP_C5) {
+            // NM-CYD-C5: see CYDR_C5_TOUCH_* in the header.
+            _nativeW = panel == CYDR_PANEL_ST7796 ? 320 : 240;
+            _nativeH = panel == CYDR_PANEL_ST7796 ? 480 : 320;
+            _mirrorX = CYDR_C5_TOUCH_MX; _mirrorY = CYDR_C5_TOUCH_MY;
+            _swapXY = CYDR_C5_TOUCH_SWAP;
+            _nvsNs = CYDR_TOUCH_NVS_NS_C5;
+        } else if (panel == CYDR_PANEL_ST7796 && cydr_activeModel() == CYDR_MODEL_035) {
             // ESP32-035: raw X runs opposite the panel's columns too, unlike
             // the 32E 3.5"/4.0" (bench, 2026-10-23).
             _nativeW = 320; _nativeH = 480;
@@ -207,7 +280,7 @@ bool chipguy_CYD_resistive_touch::_setup(cydr_board_t board, cydr_panel_t panel)
             _nvsNs = CYDR_TOUCH_NVS_NS_SHARED_320;
         }
 
-        if (_spi) return true;
+        if (_spi) { _installSampler(); return true; }
         // Add the XPT2046 to the display's already-initialized SPI bus as a
         // second device.  Hardware CS on GPIO33, slow clock, SPI mode 0.
         spi_device_interface_config_t devcfg = {};
@@ -222,9 +295,20 @@ bool chipguy_CYD_resistive_touch::_setup(cydr_board_t board, cydr_panel_t panel)
             _spi = nullptr;
             return false;
         }
+        _installSampler();
+        // Arm PENIRQ: the XPT2046 drives it only while its last command's
+        // power-down bits were 00, and nothing is sent to it until PENIRQ
+        // shows a press -- so a chip that came up (or was left) with them
+        // set would never report one.  One conversion command with PD = 00
+        // puts it in the state every later read leaves it in.
+        if (_display) _display->waitFlush();
+        _readChannel(XPT2046_CMD_Z1);
         return true;
     }
 
+#if !CYDR_CHIP_CLASSIC
+    return false;                         // no own-pins wiring on the C5 or S3
+#else
     _nativeW = 240; _nativeH = 320;
     // The XPT2046's raw X increases opposite the panel's X axis (same on the
     // ILI9341 and ST7789 boards); raw Y matches.
@@ -238,6 +322,7 @@ bool chipguy_CYD_resistive_touch::_setup(cydr_board_t board, cydr_panel_t panel)
     digitalWrite(CYDR_TOUCH_CS, HIGH);   // deselect
     digitalWrite(CYDR_TOUCH_CLK, LOW);
     return true;
+#endif
 }
 
 void chipguy_CYD_resistive_touch::setRotation(uint16_t rotation) {
@@ -317,6 +402,9 @@ void chipguy_CYD_resistive_touch::saveFilters() {
 // out the 12-bit result (MSB first).  SPI mode 0, sampled on the rising edge.
 // CS is handled by the caller.
 uint16_t chipguy_CYD_resistive_touch::_transferByteAndRead12(uint8_t cmd) {
+#if !CYDR_CHIP_CLASSIC
+    return 0;                             // own-pins wiring only; none on the C5
+#else
     // Send command byte.
     for (int i = 7; i >= 0; i--) {
         digitalWrite(CYDR_TOUCH_MOSI, (cmd >> i) & 1);
@@ -336,6 +424,7 @@ uint16_t chipguy_CYD_resistive_touch::_transferByteAndRead12(uint8_t cmd) {
         digitalWrite(CYDR_TOUCH_CLK, LOW);
     }
     return value;
+#endif
 }
 
 // One conversion on whichever bus this board uses.  On the shared bus a
@@ -372,13 +461,109 @@ uint16_t chipguy_CYD_resistive_touch::_readChannelMedian(uint8_t cmd) {
     return buf[CYDR_TOUCH_SAMPLES / 2];
 }
 
+// ── Sampling between display writes (shared bus) ───────────────────────────
+// On the shared-bus boards a read used to wait for the display's in-flight
+// pixel DMA before it could use the bus -- up to a whole LVGL region (~4 ms
+// at 40 MHz), stalling the render loop exactly while a finger drags.  Instead
+// the display runs _samplerHook() at the moments its bus is idle anyway (in
+// flushRegion(), and between the text terminal's steps); the sample lands in
+// a small cache, and read() takes it from there without touching the bus.
+// Only when the cache is old (nothing is being drawn, so the bus is free)
+// does read() sample for itself.
+//
+// Timing: the writer samples only while PENIRQ shows a press and its last
+// sample is CYDR_TOUCH_SAMPLE_MS old; a read accepts a cached sample up to
+// CYDR_TOUCH_CACHE_MS old.  PENIRQ is read directly every time, so press and
+// release are seen at once; only the coordinates can be up to one frame old.
+
+void chipguy_CYD_resistive_touch::_installSampler() {
+    if (!_display || !_spi) return;
+    if (!_sampleMutex) _sampleMutex = xSemaphoreCreateMutexStatic(&_sampleMutexBuf);
+    _display->setTouchSampler(_samplerHook, this);
+}
+
+void chipguy_CYD_resistive_touch::_samplerHook(void *arg) {
+    auto *self = (chipguy_CYD_resistive_touch *)arg;
+    if (!self->_cacheOn || !_cydr_irqDown()) return;
+    uint32_t now = millis();
+    portENTER_CRITICAL(&self->_cacheMux);
+    uint32_t age = now - self->_cache.ms;
+    bool valid = self->_cache.valid;
+    portEXIT_CRITICAL(&self->_cacheMux);
+    if (valid && age < CYDR_TOUCH_SAMPLE_MS) return;
+    // Never block the writer: if a reader is sampling right now, skip.
+    if (xSemaphoreTake(self->_sampleMutex, 0) != pdTRUE) return;
+    self->_sampleToCache();
+    xSemaphoreGive(self->_sampleMutex);
+}
+
+// One sample over the bus into the cache.  Caller holds _sampleMutex and
+// knows the bus is idle.
+bool chipguy_CYD_resistive_touch::_sampleToCache() {
+    uint16_t x, y, p;
+    bool down = _sampleBus(x, y, p);
+    portENTER_CRITICAL(&_cacheMux);
+    _cache.x = x; _cache.y = y; _cache.p = p;
+    _cache.down = down;
+    _cache.valid = true;
+    _cache.ms = millis();
+    portEXIT_CRITICAL(&_cacheMux);
+    _samples++;
+    return down;
+}
+
+uint32_t chipguy_CYD_resistive_touch::busSamples() const { return _samples; }
+
 bool chipguy_CYD_resistive_touch::_readRawSample(uint16_t &rawX, uint16_t &rawY) {
     // IRQ is pulled low by the controller only while the panel is pressed.
-    if (digitalRead(CYDR_TOUCH_IRQ) != LOW) return false;
+    if (!_cydr_irqDown()) {
+        // Released: a cached sample belongs to that press, not the next one.
+        portENTER_CRITICAL(&_cacheMux);
+        _cache.valid = false;
+        portEXIT_CRITICAL(&_cacheMux);
+        return false;
+    }
 
-    // On the shared bus, let any in-flight display DMA finish first.
+    if (_spi && _cacheOn && _sampleMutex) {
+        uint32_t now = millis();
+        portENTER_CRITICAL(&_cacheMux);
+        auto c = _cache;
+        portEXIT_CRITICAL(&_cacheMux);
+        if (!_cacheOnly && (!c.valid || now - c.ms > CYDR_TOUCH_CACHE_MS)) {
+            // Nothing recent from the writer: nothing is being drawn, so the
+            // bus is (nearly) free.  Wait out a pixel DMA if one is still
+            // going, and a writer-side sample if one is under way.
+            xSemaphoreTake(_sampleMutex, portMAX_DELAY);
+            if (_display) _display->waitFlush();
+            _sampleToCache();
+            xSemaphoreGive(_sampleMutex);
+            portENTER_CRITICAL(&_cacheMux);
+            c = _cache;
+            portEXIT_CRITICAL(&_cacheMux);
+        }
+        if (!c.valid) return false;        // cache only, and nothing sampled yet
+        _hits += c.ms != _lastSeenMs;
+        _lastSeenMs = c.ms;
+        if (!c.down) return false;
+        rawX = c.x; rawY = c.y;
+        _lastPressure = c.p;
+        return true;
+    }
+
+    // Own-pins boards, or the cache turned off: sample now.  On the shared
+    // bus, let any in-flight display DMA finish first.
     if (_spi && _display) _display->waitFlush();
+    uint16_t p;
+    bool down = _sampleBus(rawX, rawY, p);
+    _lastPressure = p;
+    return down;
+}
 
+// One full sample on whichever bus this board uses: medians of X and Y, the
+// pressure, and PENIRQ again at the end.  Returns false if the press ended
+// during sampling (a spurious single-edge IRQ, or a lift).
+bool chipguy_CYD_resistive_touch::_sampleBus(uint16_t &rawX, uint16_t &rawY, uint16_t &pressure) {
+    pressure = 0;
     if (!_spi) digitalWrite(CYDR_TOUCH_CS, LOW);
     // Median of several conversions per axis rejects the occasional spike far
     // better than a mean (which blends it in) — resistive jitter is mostly
@@ -407,12 +592,10 @@ bool chipguy_CYD_resistive_touch::_readRawSample(uint16_t &rawX, uint16_t &rawY)
             p = (r > 0.0f) ? CYDR_TOUCH_P_SCALE / r : 4095.0f;
         }
     }
-    _lastPressure = (uint16_t)(p > 4095.0f ? 4095.0f : p);
+    pressure = (uint16_t)(p > 4095.0f ? 4095.0f : p);
 
     // Still pressed after sampling?  Rejects spurious single-edge IRQs.
-    if (digitalRead(CYDR_TOUCH_IRQ) != LOW) return false;
-
-    return true;
+    return _cydr_irqDown();
 }
 
 // GT911 registers: 0x814E status (bit 7 = new data, low nibble = points),
@@ -427,12 +610,12 @@ bool chipguy_CYD_resistive_touch::_gtReg(uint16_t reg, uint8_t *buf, int n) {
 }
 
 bool chipguy_CYD_resistive_touch::_gtRegLocked(uint16_t reg, uint8_t *buf, int n) {
-    Wire1.beginTransmission(_capAddr);
-    Wire1.write(reg >> 8);
-    Wire1.write(reg & 0xFF);
-    if (Wire1.endTransmission(false) != 0) return false;
-    if (Wire1.requestFrom((int)_capAddr, n) != n) return false;
-    for (int i = 0; i < n; i++) buf[i] = Wire1.read();
+    CYDR_CAP_WIRE.beginTransmission(_capAddr);
+    CYDR_CAP_WIRE.write(reg >> 8);
+    CYDR_CAP_WIRE.write(reg & 0xFF);
+    if (CYDR_CAP_WIRE.endTransmission(false) != 0) return false;
+    if (CYDR_CAP_WIRE.requestFrom((int)_capAddr, n) != n) return false;
+    for (int i = 0; i < n; i++) buf[i] = CYDR_CAP_WIRE.read();
     return true;
 }
 
@@ -447,9 +630,9 @@ bool chipguy_CYD_resistive_touch::_gt911Read(uint16_t &rawX, uint16_t &rawY) {
             _lastPressure = p[4] | p[5] << 8;
         }
         cydr_touchI2cLock();
-        Wire1.beginTransmission(_capAddr);
-        Wire1.write(0x81); Wire1.write(0x4E); Wire1.write(0);
-        Wire1.endTransmission();
+        CYDR_CAP_WIRE.beginTransmission(_capAddr);
+        CYDR_CAP_WIRE.write(0x81); CYDR_CAP_WIRE.write(0x4E); CYDR_CAP_WIRE.write(0);
+        CYDR_CAP_WIRE.endTransmission();
         cydr_touchI2cUnlock();
     }
     rawX = _swapXY ? _gtY : _gtX;
@@ -469,11 +652,11 @@ bool chipguy_CYD_resistive_touch::_cstReg(uint8_t reg, uint8_t *buf, int n) {
 }
 
 bool chipguy_CYD_resistive_touch::_cstRegLocked(uint8_t reg, uint8_t *buf, int n) {
-    Wire1.beginTransmission(_capAddr);
-    Wire1.write(reg);
-    if (Wire1.endTransmission(false) != 0) return false;
-    if (Wire1.requestFrom((int)_capAddr, n) != n) return false;
-    for (int i = 0; i < n; i++) buf[i] = Wire1.read();
+    CYDR_CAP_WIRE.beginTransmission(_capAddr);
+    CYDR_CAP_WIRE.write(reg);
+    if (CYDR_CAP_WIRE.endTransmission(false) != 0) return false;
+    if (CYDR_CAP_WIRE.requestFrom((int)_capAddr, n) != n) return false;
+    for (int i = 0; i < n; i++) buf[i] = CYDR_CAP_WIRE.read();
     return true;
 }
 
@@ -496,13 +679,18 @@ const char *chipguy_CYD_resistive_touch::chipName() const {
     switch (_chip) {
         case CYDR_TOUCH_GT911:  return "GT911";
         case CYDR_TOUCH_CST820: return "CST820";
+        case CYDR_TOUCH_FT6336: return "FT6336";
+        case CYDR_TOUCH_NONE:   return "none";
         default:                return "XPT2046";
     }
 }
 
 bool chipguy_CYD_resistive_touch::readRaw(uint16_t &rawX, uint16_t &rawY) {
     if (_chip == CYDR_TOUCH_GT911)  return _gt911Read(rawX, rawY);
-    if (_chip == CYDR_TOUCH_CST820) return _cst820Read(rawX, rawY);
+    // The FT6336's point registers (0x02 count, 0x03..0x06 X / Y) are laid out
+    // as the CST820's.
+    if (_chip == CYDR_TOUCH_CST820 || _chip == CYDR_TOUCH_FT6336) return _cst820Read(rawX, rawY);
+    if (_chip == CYDR_TOUCH_NONE) return false;
     return _readRawSample(rawX, rawY);
 }
 

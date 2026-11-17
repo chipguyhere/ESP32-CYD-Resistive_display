@@ -1,4 +1,7 @@
-# Resistive-touch CYD boards — TF / microSD card slot
+# Resistive-touch CYD boards (ESP32) — TF / microSD card slot
+
+> The classic **ESP32** boards. The **NM-CYD-C5**, whose card shares the display's
+> bus, is in [README-sdcard-ESP32-C5.md](README-sdcard-ESP32-C5.md).
 
 The card slot's wiring, so a sketch can mount it with whichever driver it prefers. This
 library does not drive the slot and does not include a filesystem. The board has a
@@ -44,7 +47,7 @@ before `SD.begin()` and nothing needs enabling in software.
 [How it was measured](README-engineering.md#card-slot).
 
 A sketch that runs on more than one of these boards does **not** need to ask
-[which board it's on](README-board-detection.md) before mounting the card.
+[which board it's on](README-board-detection-ESP32.md) before mounting the card.
 
 What differs between boards is only *around* the slot. On the 3.2", 3.5", 4.0", ESP32-024, ESP32-035 and ESP32-2432S032 the
 touch chip shares the display's HSPI bus rather than being bit-banged — which changes
@@ -86,19 +89,19 @@ is left asserted. Two consequences:
 
 - With nothing on the header there is no sharing at all; the card is alone on
   GPIO5/18/19/23, and IO27 is a free GPIO (see
-  [README-board.md](README-board.md#which-pins-are-already-taken)).
+  [README-board-ESP32.md](README-board-ESP32.md#which-pins-are-already-taken)).
 - IO27 is shared with nothing else on the board, so a device on the header has no side
   effects. It has **no pull-up**, so drive it HIGH early in `setup()` — before
   `SD.begin()` — so the external device isn't selected while the card mounts. Keep
   each CS HIGH whenever the other device is being addressed.
 - **Not using the card at all?** Then the header's four pins are plain GPIOs, and the
   usual thing to do with them is I²C — see
-  [README-board.md](README-board.md#which-pins-are-already-taken).
+  [README-board-ESP32.md](README-board-ESP32.md#which-pins-are-already-taken).
 
 Nothing else touches the card's pins: the display is on HSPI (GPIO13/14/15/2, with 12 as its MISO),
 the touch is bit-banged on GPIO25/32/33/39/36, and the LED, amplifier, speaker, battery
 sense, backlight and boot button are elsewhere — the full allocation is in
-[README-board.md](README-board.md#which-pins-are-already-taken).
+[README-board-ESP32.md](README-board-ESP32.md#which-pins-are-already-taken).
 
 ## SPI hosts already in use
 
@@ -111,6 +114,11 @@ sense, backlight and boot button are elsewhere — the full allocation is in
 Touch uses no host (bit-banged), so there is nothing to coordinate with it. Both
 general-purpose hosts are therefore spoken for: anything else that wants hardware SPI
 joins VSPI through the SPI header (CS per device, same host) or bit-bangs.
+
+A sketch meant for more than one board can ask the library for the card's CS pin
+instead of writing the number in: `display.sdCsPin()` (or `cydr_sdCsPin()`) returns 5
+on the classic boards, 10 on the NM-CYD-C5, and −1 on the ES3C28P, whose card is
+SDMMC and has no CS. It is fixed per chip and works before `begin()`.
 
 ## Starting points
 
