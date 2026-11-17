@@ -1328,6 +1328,25 @@ frame (a stutter), never a tear, because a missed start moves to the next refres
 slot. The plan reserves time for 16 LVGL rows, two window commands and the scan read
 in every frame, so a slower refresh is only suggested if LVGL keeps a turn.
 
+**Half rate.** Where the plan sends one frame per refresh, a sketch can drop to one
+frame every two refreshes (`raster_set_half_rate(true)`) and come back; the physics and
+the frame-rate readout follow from the next frame. There is no half of half rate: a plan
+that already needs two refreshes per frame refuses it, because that is the slowest
+tear-free cadence. At half rate the chunks are paced rather than sent as fast as the
+bus goes, so the render task's time is spread evenly over the frame. The pace can't fill
+two whole refreshes: every row must land between two passes of the scan over it, so the
+write's offset against the scan may vary by less than one refresh across the ball rows,
+which caps a frame at one refresh plus the scan's time across those rows. The pacing
+takes 90 % of the offset's room, from one guard after the scan passes row 0, and is
+held inside two refreshes less LVGL's share. On the ESP32-32E 2.8" ST7789 (59.7 Hz,
+240 of 334 lines) that is 103.7 µs a row, 24.9 ms a frame (1.5 refreshes), against
+49 µs a row unpaced. With every chunk made 1.2 ms slower to draw, full rate missed 30
+frame starts a second; paced half rate ran 30 fps with none missed (2026-11-17).
+
+`raster_auto_half_rate(true)` makes the drop automatic: 3 late or missed frames within
+60 switch to half rate, well before the watchdog's 20 late in a row. It doesn't switch
+back by itself.
+
 **Reports and the watchdog.** The render task reports every chunk it is asked for,
 either drawn (a buffer) or abandoned (it saw the frame dropped). The raster task
 publishes the frame it is sending; a render task behind it abandons its frame and

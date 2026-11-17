@@ -41,8 +41,12 @@
  * second.  Keys typed into it: on the teaching screens 'n' presses the
  * right-hand button, 's' the left-hand one and 'f' Flip; while the balls run,
  * 'm' / 'l' set both sliders to the top / back to their start, 'h' makes the render
- * task overrun (to see the watchdog) and 'k' stops that, 'w' / 'W' turn the
- * watchdog off / on, 'q' turns the status line off / on, 'p' freezes /
+ * task overrun (to see the watchdog), 'j' slows each chunk by 1.2 ms (too
+ * slow for full rate on a 60 Hz board, fine at half rate) and 'k' stops that, 'w' / 'W' turn the
+ * watchdog off / on, '2' / '1' switch to half rate (a frame every two
+ * refreshes) / back to full rate where the board can do it (see
+ * raster_set_half_rate() in raster.h), 'a' turns the automatic drop to half
+ * rate on / off, 'q' turns the status line off / on, 'p' freezes /
  * unfreezes the frame-rate readout.
  *
  * Copyright (c) 2026 chipguyhere
@@ -650,9 +654,10 @@ static void verdict_page() {
                     "animation.");
     }
     Serial.printf("Plan: scan %d, tear-free %d, periods %d, transfer %.0f us, span %.0f us, "
-                  "guard %.0f us, period %.0f us, start +%.0f us\n",
+                  "guard %.0f us, period %.0f us, start +%.0f us; half rate paced at %.1f us a "
+                  "row (%.0f us a frame), start +%.0f us\n",
                   p.scanKnown, p.tearFree, p.periods, p.transferUs, p.spanUs, p.guardUs, P,
-                  p.startOffsetUs);
+                  p.startOffsetUs, p.pacedRowUs, p.pacedRowUs * p.ballRows, p.pacedStartOffsetUs);
     page_wait();
 }
 
@@ -724,9 +729,10 @@ static void perf_update(lv_timer_t *) {
     char shown[12];
     snprintf(shown, sizeof shown, "%d", (int)(fps + 0.5f));
     if (g_plan.tearFree) {
-        float target = s.hz / g_plan.periods;
+        const int periods = raster_periods();
+        float target = s.hz / periods;
         if (fabsf(fps - target) <= 0.15f * target)
-            snprintf(shown, sizeof shown, "%s", rate_text(s.hz, g_plan.periods));
+            snprintf(shown, sizeof shown, "%s", rate_text(s.hz, periods));
     }
     if (!g_readout)
         ;                                          // Serial 'p': readout frozen
@@ -818,6 +824,11 @@ static void start_animation() {
     //raster_watchdog(false);
     raster_watch(render, RASTER_PRIORITY - 1, uxTaskPriorityGet(nullptr));   // setup() runs at loop()'s priority
     raster_start(g_plan, core, RASTER_PRIORITY);
+    // A sketch that does more work per frame than this one can give itself
+    // twice the time: run at half rate (a frame every two refreshes), or let
+    // the raster task drop to it if frames start coming out late.
+    //raster_set_half_rate(true);
+    //raster_auto_half_rate(true);
     build_strip();
     Serial.printf("Running: core %d, internal RAM free %u\n", core,
                   (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
@@ -876,9 +887,20 @@ void loop() {
     if (c == 'm') sliders_to(BALLS_MAX, 100);
     if (c == 'l') sliders_to(START_BALLS, START_SPEED);
     if (c == 'h') { balls_set_overrun_us(30000); Serial.println("render task: overrunning 30 ms a chunk"); }
+    if (c == 'j') { balls_set_overrun_us(1200); Serial.println("render task: 1.2 ms extra a chunk (too slow for full rate, fine at paced half rate)"); }
     if (c == 'k') { balls_set_overrun_us(0); Serial.println("render task: normal"); }
     if (c == 'w') { raster_watchdog(false); Serial.println("watchdog off"); }
     if (c == 'W') { raster_watchdog(true); Serial.println("watchdog on"); }
+    if (c == '1' || c == '2')
+        Serial.printf("%s\n", raster_set_half_rate(c == '2')
+                      ? (c == '2' ? "half rate: a frame every two refreshes" : "full rate: a frame every refresh")
+                      : "this board's plan can't do a frame every refresh");
+    if (c == 'a') {
+        static bool autoHalf = false;
+        autoHalf = !autoHalf;
+        raster_auto_half_rate(autoHalf);
+        Serial.printf("automatic half rate %s\n", autoHalf ? "on" : "off");
+    }
     if (c == 'q') { g_statusPrint = !g_statusPrint; Serial.printf("status line %s\n", g_statusPrint ? "on" : "off"); }
     if (c == 'p') { g_readout = !g_readout; Serial.printf("readout %s\n", g_readout ? "updating" : "frozen"); }
     lv_handler_timed();

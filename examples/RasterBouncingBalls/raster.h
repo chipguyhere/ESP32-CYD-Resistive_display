@@ -69,6 +69,11 @@ struct RasterPlan {
     double spanUs = 0;         // how far the write drifts against the scan over the area
     double guardUs = 0;        // timing margin kept each side
     double startOffsetUs = 0;  // start this long after the scan reaches line 0
+    // Half rate, paced (where periods is 1): chunks spread over most of the
+    // window a frame may take without tearing, rather than sent as fast as
+    // the bus goes.  0 if pacing gives nothing (the bus is already slower).
+    double pacedRowUs = 0;     // one row's share of the paced frame
+    double pacedStartOffsetUs = 0;
     ScanModel model;
 };
 void raster_plan(RasterPlan &p);
@@ -89,6 +94,25 @@ void raster_start(const RasterPlan &p, int core, int priority);
 void raster_watch(TaskHandle_t render, UBaseType_t normalPrio, UBaseType_t lvglPrio);
 // On by default.  raster_watchdog(false): leave the render task alone.
 void raster_watchdog(bool on);
+
+// Half rate.  Where the plan sends one frame per refresh, a sketch can drop to
+// one frame every two refreshes, still tear-free, and come back.  At half
+// rate the chunks are paced: sent evenly over most of the time a frame may
+// take, so the render task has that long to compose them, spread evenly.
+// Not the full two refreshes: every row must land between two passes of the
+// scan over it, so a frame can take at most one refresh plus the scan's
+// time across the ball rows (about 1.6 refreshes for 240 rows of 320).  The
+// pacing uses 90 % of that; the rest goes to LVGL and the scan reading.  Takes
+// effect from the next frame; the physics follows.  False (and no change) if
+// the plan can't do one frame per refresh, or isn't timed to the scan at all.
+bool raster_set_half_rate(bool on);
+// Refreshes per frame now: 1 or 2; 0 when not timed to the scan.
+int raster_periods();
+// Off by default.  On: drop to half rate by itself if 3 frames come out late,
+// or miss their start, within 60 frames.  It doesn't come back by itself: call
+// raster_set_half_rate(false) for that.  (The watchdog trips at 20 late in a
+// row; this acts well before.)
+void raster_auto_half_rate(bool on);
 
 // Send rows y1..y2 (full width, big-endian RGB565) through the raster task,
 // and wait until they're out.  The LVGL flush calls this.

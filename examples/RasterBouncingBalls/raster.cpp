@@ -137,6 +137,19 @@ void raster_plan(RasterPlan &p) {
     //   t0 + c + (B/2) w - (S + (a + B/2) L) = P/2
     const double a = blank / 2.0;
     p.startOffsetUs = P / 2 + a * L - p.windowUs - (p.ballRows / 2.0) * (p.rowUs - L);
+    // Half rate, paced: the write's offset against the scan runs from one
+    // guard after the scan passes row 0 to 90 % of the way to the next pass,
+    // evenly, and the frame plus LVGL's share fits in two refreshes.
+    p.pacedRowUs = 0;
+    if (p.periods == 1) {
+        double rowUs = L + 0.9 * (P - 2 * p.guardUs) / p.ballRows;
+        const double maxRowUs = (2 * P - reserve - p.windowUs) / p.ballRows;
+        if (rowUs > maxRowUs) rowUs = maxRowUs;
+        if (rowUs > p.rowUs) {
+            p.pacedRowUs = rowUs;
+            p.pacedStartOffsetUs = a * L + p.guardUs - p.windowUs;
+        }
+    }
 }
 
 /* ----------------------------------------------------------------- the task */
@@ -152,10 +165,10 @@ static void wait_until(int64_t t) {
 }
 
 // The first start at or after `after`: S + startOffset, S a time the scan is at line 0.
-static int64_t next_start(const ScanModel &m, int64_t after) {
-    double u = m.lineAt(after - (int64_t)s_plan.startOffsetUs);
+static int64_t next_start(const ScanModel &m, int64_t after, double offsetUs) {
+    double u = m.lineAt(after - (int64_t)offsetUs);
     double k = ceil(u / m.lines);
-    return m.timeOf(k * m.lines) + (int64_t)s_plan.startOffsetUs;
+    return m.timeOf(k * m.lines) + (int64_t)offsetUs;
 }
 
 // The longest touch sample seen, so one isn't started without time for it.
@@ -225,6 +238,19 @@ static bool serve_gap(int64_t deadline, LvglJob &job, bool &haveJob) {
     s_lvglStarved = haveJob && !sent ? s_lvglStarved + 1 : 0;
     return haveJob;
 }
+
+/* ----------------------------------------------------------------- half rate */
+
+static volatile int  s_periods = 0;        // refreshes per frame now (0: not timed)
+static volatile bool s_autoHalf = false;
+
+bool raster_set_half_rate(bool on) {
+    if (!s_plan.tearFree || s_plan.periods != 1) return false;
+    s_periods = on ? 2 : 1;
+    return true;
+}
+int raster_periods() { return s_periods; }
+void raster_auto_half_rate(bool on) { s_autoHalf = on; }
 
 // Give a buffer back to the render task.
 static inline void release(uint8_t b) { if (b != RASTER_NO_BUF) xQueueSend(g_freeQ, &b, 0); }
@@ -303,7 +329,11 @@ static void raster_task(void *) {
     const bool synced = s_plan.tearFree;
     const int chunks = s_plan.ballRows / CHUNK_ROWS;
     const double P = m.periodUs(), w = s_plan.rowUs;
-    const double frameUs = synced ? s_plan.periods * P : 0;
+    int periodsNow = 0;                        // what the physics was last told
+    bool paced = false;                        // this frame's chunks are paced
+    bool slipped = false;                      // this frame's start was missed
+    double offset = s_plan.startOffsetUs;      // this frame's start against the scan
+    uint32_t autoWindowStart = 0, autoLate = 0;
     LvglJob job = {};
     bool haveJob = false;
     int64_t t0 = 0, lastStart = 0;
@@ -317,11 +347,21 @@ static void raster_task(void *) {
         // 1. When this frame starts.
         int64_t now = esp_timer_get_time();
         if (synced) {
+            const int periods = s_periods;
+            if (periods != periodsNow) {          // half rate switched: the physics follows
+                periodsNow = periods;
+                balls_set_frame_us((float)(periods * P));
+            }
+            const double frameUs = periods * P;
+            // Half rate is paced, from an earlier start (see raster_plan()).
+            paced = periods == 2 && s_plan.pacedRowUs > 0;
+            offset = paced ? s_plan.pacedStartOffsetUs : s_plan.startOffsetUs;
             int64_t after = frame == 0 ? now + 5000 : t0 + (int64_t)(frameUs - P / 2);
-            t0 = next_start(m, after);
+            t0 = next_start(m, after, offset);
             if (t0 < now + 200) {              // missed: the next refresh's slot
                 s_slips = s_slips + 1;
-                t0 = next_start(m, now + 500);
+                slipped = true;
+                t0 = next_start(m, now + 500, offset);
             }
             // 2. LVGL and touch until shortly before then.
             backlog = serve_gap(t0 - 150, job, haveJob);
@@ -337,7 +377,7 @@ static void raster_task(void *) {
 
         // 3. The ball area, chunk by chunk as the render task delivers.
         g_rasterFrame = frame;
-        const int64_t S = t0 - (int64_t)s_plan.startOffsetUs;   // scan at line 0
+        const int64_t S = t0 - (int64_t)offset;   // scan at line 0
         const double a = (m.lines - s_plan.H) / 2.0;
         g_display->setWindow(0, 0, s_W - 1, s_plan.ballRows - 1);
         int inflight = 0;
@@ -357,6 +397,8 @@ static void raster_task(void *) {
                 double d = 4 * CHUNK_ROWS * w;
                 deadline = esp_timer_get_time() + (int64_t)(d > 5000 ? d : 5000);
             }
+            // Paced: not before this chunk's share of the frame.
+            if (paced) wait_until(t0 + (int64_t)(s_plan.windowUs + c * CHUNK_ROWS * s_plan.pacedRowUs));
             RasterChunk rc;
             for (;;) {
                 int64_t left = deadline - esp_timer_get_time();
@@ -385,6 +427,17 @@ static void raster_task(void *) {
             s_frames = s_frames + 1;
         }
         watchdog_frame(dropped);
+        // Automatic half rate: 3 late or slipped frames within 60.
+        if (s_autoHalf && s_periods == 1) {
+            if (frame - autoWindowStart >= 60) { autoWindowStart = frame; autoLate = 0; }
+            if ((dropped || slipped) && ++autoLate >= 3) {
+                s_periods = 2;
+                Serial.println("raster: frames are coming out late at the full rate; "
+                               "dropped to half rate (raster_auto_half_rate).");
+            }
+        }
+
+        slipped = false;
 
         // 4. Where is the scan really?  Correct the model -- every other
         // frame while LVGL has rows waiting, to leave it the time.
@@ -409,6 +462,7 @@ static void raster_task(void *) {
 
 void raster_start(const RasterPlan &p, int core, int priority) {
     s_plan = p;
+    s_periods = p.tearFree ? p.periods : 0;
     s_lineUs = p.model.lineUs;
     esp_timer_create_args_t ta = {};
     ta.callback = timer_cb;
