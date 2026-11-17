@@ -403,9 +403,11 @@ static void transfer_pages() {
 static ScanModel g_stockModel;   // measured at the stock rate
 static bool g_slowed = false;
 
-// The plan if the panel ran at `ratio` of its stock rate.
-static RasterPlan plan_at(float ratio) {
+// The plan if the panel ran at `ratio` of its stock rate -- for the ball
+// area, or for `rows` rows (a sketch animating the whole screen).
+static RasterPlan plan_at(float ratio, int rows = 0) {
     RasterPlan p = g_plan;
+    if (rows) p.ballRows = rows;
     p.model = g_stockModel;
     p.model.lineUs = g_stockModel.lineUs / ratio;
     raster_plan(p);
@@ -472,8 +474,9 @@ static lv_obj_t *g_rateLabel;
 // Try the options on the panel: test patterns, with Flip cycling through
 // them and the normal rate.  The left button keeps whatever is showing, the
 // right one (and BOOT) the normal rate.  Returns the chosen option, or -1 for
-// the normal rate.
-static int try_options(const RateOption *opt, int n) {
+// the normal rate.  fullOpt: the option that's tear-free for the whole
+// screen too (marked as such), or -1.
+static int try_options(const RateOption *opt, int n, int fullOpt = -1) {
     const float stockHz = (float)g_stockModel.hz();
     lv_obj_t *b = page("Look closely", nullptr);
     lv_obj_set_height(b, H - 30 - 46 - 116);
@@ -492,10 +495,11 @@ static int try_options(const RateOption *opt, int n) {
         bool normal = shown == n;
         float hz = normal ? stockHz : opt[shown].hz;
         display.setRefreshStep(normal ? 0 : opt[shown].step, stockHz);
-        lv_label_set_text_fmt(g_rateLabel, "Now: %s, %d refreshes per second%s",
+        lv_label_set_text_fmt(g_rateLabel, "Now: %s, %d refreshes per second%s%s",
                               normal ? "normal" : "slowed", (int)lroundf(hz),
                               normal ? "" : opt[shown].periods == 2 ? "\n(a frame every two)"
-                                                                     : "\n(a frame every refresh)");
+                                                                     : "\n(a frame every refresh)",
+                              !normal && shown == fullOpt ? "\nWhole screen tear-free too" : "");
         lv_label_set_text_fmt(useShown, "Use %d", (int)lroundf(hz));
         Serial.printf("[page] Look closely | %s | Use %d | Flip (f)\n", useStock, (int)lroundf(hz));
     };
@@ -546,7 +550,7 @@ static void refresh_tuning_pages() {
     // When the best is one frame per refresh at a slow rate, one frame every
     // two refreshes at about twice the rate gives nearly the same frames per
     // second with much less flicker: offer the fastest such step instead.
-    RateOption opts[1];
+    RateOption opts[2];
     int nOpts = 0;
     if (best >= 0) {
         opts[nOpts++] = {best, bestHz, bestPeriods};
@@ -563,9 +567,34 @@ static void refresh_tuning_pages() {
             }
         }
     }
+    // A sketch that animates the whole screen, not just a ball area, needs
+    // more: the write drifts against the scan over every row.  Where neither
+    // the normal rate nor the balls' choice is tear-free for all the rows,
+    // offer too the fastest step that is, so the saved choice can serve such
+    // sketches (they apply it with display.applyRefreshChoice()).
+    const int fullRows = H / CHUNK_ROWS * CHUNK_ROWS;
+    int fullOpt = -1, full = -1;
+    float fullHz = 0;
+    if (!plan_at(1, fullRows).tearFree) {
+        for (int s = 1; s < display.refreshStepCount(); s++) {
+            float r = display.refreshStepRatio(s);
+            if (stockHz * r < CYDR_MIN_REFRESH_HZ) break;
+            if (plan_at(r * 1.02f, fullRows).tearFree) { full = s; fullHz = stockHz * r; break; }
+        }
+        bool covered = nOpts > 0 &&
+                       plan_at(display.refreshStepRatio(opts[0].step) * 1.02f, fullRows).tearFree;
+        if (full >= 0 && !covered) {
+            RasterPlan pb = plan_at(display.refreshStepRatio(full) * 1.02f);   // the balls at that rate
+            opts[nOpts] = {full, fullHz, pb.tearFree ? pb.periods : 2};
+            fullOpt = nOpts++;
+        } else if (full >= 0) {
+            fullOpt = 0;                       // the balls' choice does for the whole screen
+        }
+    }
     Serial.printf("Refresh tuning: stock %.2f Hz (%.1f fps tear-free), tear-free from %.1f Hz, "
-                  "best step %d at %.1f Hz -> %.1f fps\n",
-                  stockHz, stockFps, any ? needHz : 0, best, bestHz, bestFps);
+                  "best step %d at %.1f Hz -> %.1f fps; whole screen (%d rows) tear-free from "
+                  "step %d at %.1f Hz\n",
+                  stockHz, stockFps, any ? needHz : 0, best, bestHz, bestFps, fullRows, full, fullHz);
 
     cydr_refresh_choice_t saved;
     bool haveSaved = cydr_loadRefreshChoice(saved) && saved.panel == display.panel();
@@ -582,7 +611,7 @@ static void refresh_tuning_pages() {
     }
 
     lv_obj_t *b;
-    if (best < 0) {
+    if (nOpts == 0) {
         b = page("A slower refresh", "Next");
         if (stockFps > 0)
             add_text(b, "No need to slow your screen down: it's fast enough already.",
@@ -595,8 +624,13 @@ static void refresh_tuning_pages() {
     }
     b = page("A slower refresh", "Next", "Try it");
     const RateOption &o = opts[0];
-    Serial.printf("Refresh offer: step %d, %.2f Hz, %d refresh(es) a frame\n", o.step, o.hz, o.periods);
-    if (stockFps > 0)
+    Serial.printf("Refresh offer: step %d, %.2f Hz, %d refresh(es) a frame%s\n", o.step, o.hz,
+                  o.periods, nOpts > 1 ? "; Flip: the whole-screen step" : "");
+    if (best < 0)                          // only the whole-screen option
+        add_text(b, FMT("The balls are fine at the normal rate. Sketches that animate the whole "
+                        "screen would tear at it; slowed to about %.0f refreshes per second, "
+                        "they won't.", o.hz));
+    else if (stockFps > 0)
         add_text(b, FMT("Slowing your screen to %.0f refreshes per second would make the balls "
                         "smoother: %s frames per second instead of %s.", o.hz,
                         rate_text(o.hz, o.periods), rate_text(stockHz, stockPlan.periods)));
@@ -608,9 +642,12 @@ static void refresh_tuning_pages() {
     add_text(b, "The cost: some patterns may flicker. It's only a setting, undone by a "
                 "restart, and the library won't go slow enough to harm the screen.",
              0xFFD040);
+    if (nOpts > 1)
+        add_text(b, FMT("Sketches that animate the whole screen need it slower still: about "
+                        "%.0f refreshes per second. Flip shows that choice too.", opts[1].hz));
     add_text(b, "Try it to see test patterns at the slower speed.");
     if (page_wait() != 1) { cydr_clearRefreshChoice(); return; }
-    int pick = try_options(opts, nOpts);
+    int pick = try_options(opts, nOpts, fullOpt);
     if (pick < 0 || !remeasure()) {
         back_to_stock();
         cydr_clearRefreshChoice();

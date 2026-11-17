@@ -176,6 +176,19 @@ start. See [README-lvgl.md](README-lvgl.md#rasterbouncingballs--what-can-your-sc
 You can also install it straight from your web browser, without the Arduino IDE:
 [CYD Raster FPS Stress Test](https://github.com/chipguyhere/CYD-Raster-FPS-Stress-Test).
 
+### RasterFireRainSnow — a full-screen showcase
+
+Three animated scenes, ten seconds each: a campfire under the stars, a thunderstorm
+at sunset, and snowfall in the mountains. The whole screen moves, at up to about 30
+frames a second, with no tearing. Run **RasterBouncingBalls** on the board first. The
+showcase uses what it saves: whether your screen can go double speed, and a slower
+refresh if your screen needs one. If RasterBouncingBalls offers a choice marked
+"Whole screen tear-free too", take that one. The pictures are large, so pick the
+Partition Scheme given at the top of
+[RasterFireRainSnow.ino](examples/RasterFireRainSnow/RasterFireRainSnow.ino), which
+also explains how it works. To make your own animated art, start with
+[README-raster-graphics.md](README-raster-graphics.md).
+
 ---
 
 ## Touch calibration & filtering
@@ -310,6 +323,7 @@ Its amplifier is off until your sketch turns it on. **MP3Player** plays on it.
 | [README-lvgl.md](README-lvgl.md) | You're building a graphical app with LVGL: the examples, the `lv_setup` setup code, rotation. |
 | [README-terminal.md](README-terminal.md) | You're using the text terminal: printing, colors, scrolling, touch, fonts, and the examples. |
 | [README-overrides.md](README-overrides.md) | Your board looks wrong — colors swapped, picture mirrored, touch backwards — or the library named the wrong board or size: how to correct it from `TouchCalibrate` without changing any code. |
+| [README-raster-graphics.md](README-raster-graphics.md) | You want smooth full-screen animation without LVGL: what to design toward if you're an artist, and how the raster examples do it if you're writing the code. |
 | **Classic boards (ESP32)** | |
 | [README-board-ESP32.md](README-board-ESP32.md) | You want to use the LED, the button, the connectors, or add your own hardware, and need to know which pins are free. |
 | [README-power-ESP32.md](README-power-ESP32.md) | You want to run on battery, read the battery level, or make the board sleep and wake. |
