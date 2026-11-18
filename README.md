@@ -189,6 +189,18 @@ Partition Scheme given at the top of
 also explains how it works. To make your own animated art, start with
 [README-raster-graphics.md](README-raster-graphics.md).
 
+### RasterSpeedometer — the old way and the raster way
+
+The same speedometer drawn two ways. First, the way a typical TFT_eSPI sketch draws it:
+the blocky 5 × 7 font and thin lines, with the needle and number flickering as they are
+erased and redrawn. Then the raster way: a chrome-and-glass dial over a warp-speed
+starfield, a smooth needle with a shadow and a glow, a lit arc, and numbers that light
+up as the speed reaches them. It runs at about 30 frames a second. Touch the screen to
+drive it yourself — the left edge is 0, the right edge is top speed — and press BOOT to
+let it carry on from there. As with the
+showcase above, run **RasterBouncingBalls** first. See
+[RasterSpeedometer.ino](examples/RasterSpeedometer/RasterSpeedometer.ino).
+
 ---
 
 ## Touch calibration & filtering

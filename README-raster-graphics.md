@@ -2,7 +2,7 @@
 
 For a developer — or an AI assistant writing code for one — who wants full-screen
 animation on these boards without LVGL: a picture drawn a strip at a time, straight
-to the panel, with no tearing. It collects what was learned building the two raster
+to the panel, with no tearing. It collects what was learned building the raster
 examples, so a new sketch can skip the experiments that taught it:
 
 - **`RasterBouncingBalls`** — the reference for the technique, and the tool that tests
@@ -10,6 +10,9 @@ examples, so a new sketch can skip the experiments that taught it:
 - **`RasterFireRainSnow`** — a whole-screen, landscape, two-core version: three
   animated scenes at up to about 30 frames a second on every board in the family.
   Most of the numbers below come from it.
+- **`RasterSpeedometer`** — the same two-core plumbing with a different kind of
+  picture: a pre-rendered dial whose glass lets a starfield through, lit by
+  per-frame tables, with an analytic needle and scaled numbers drawn on top.
 
 The reasoning behind the tear-free timing is in
 [README-engineering.md § Beam chasing](README-engineering.md#beam-chasing); this file
